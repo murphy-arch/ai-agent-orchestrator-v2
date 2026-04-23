@@ -1,0 +1,103 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit
+
+      - name: Build
+        run: npm run build
+
+      - name: Create deploy tarball
+        run: |
+          tar --exclude="node_modules" --exclude="dist" --exclude=".git" -czf deploy.tar.gz .
+
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TAILSCALE_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TAILSCALE_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: Add SSH key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
+
+      - name: Deploy to droplet
+        run: |
+          echo "Uploading tarball..."
+          scp -o StrictHostKeyChecking=no deploy.tar.gz root@olympus-ollama-cd.tail218dac.ts.net:/tmp/ai-orchestrator-deploy.tar.gz
+
+          echo "Running remote deploy..."
+          ssh -o StrictHostKeyChecking=no root@olympus-ollama-cd.tail218dac.ts.net << 'REMOTE_EOF'
+            set -e
+            APP_DIR="/opt/ai-orchestrator"
+            TAR_FILE="/tmp/ai-orchestrator-deploy.tar.gz"
+
+            echo "[1/4] Backing up .env..."
+            if [ -f "$APP_DIR/.env" ]; then
+              cp "$APP_DIR/.env" /tmp/.env.backup
+            fi
+
+            echo "[2/4] Extracting new code..."
+            tar -xzf "$TAR_FILE" -C /tmp/
+            cp -a /tmp/. "$APP_DIR/"
+            rm -rf /tmp/package.json /tmp/src /tmp/api /tmp/db /tmp/public /tmp/scripts /tmp/contracts /tmp/index.html /tmp/vite.config.ts /tmp/tsconfig.json /tmp/tsconfig.app.json /tmp/tsconfig.node.json /tmp/postcss.config.js /tmp/tailwind.config.js /tmp/eslint.config.js /tmp/drizzle.config.ts /tmp/.github /tmp/electron /tmp/build /tmp/CHANGELOG.md /tmp/CONTRIBUTING.md /tmp/LICENSE /tmp/README.md /tmp/MILESTONES.md /tmp/work-items.md /tmp/plan.md 2>/dev/null || true
+
+            echo "[3/4] Restoring .env..."
+            if [ -f /tmp/.env.backup ]; then
+              cp /tmp/.env.backup "$APP_DIR/.env"
+              rm /tmp/.env.backup
+            fi
+
+            echo "[4/4] Rebuilding and restarting..."
+            cd "$APP_DIR"
+            docker compose up -d --build app
+            sleep 10
+            docker compose ps
+
+            echo ""
+            echo "=== App logs (last 5 lines) ==="
+            docker compose logs --tail 5 app || true
+
+            echo ""
+            echo "Deployment complete!"
+          REMOTE_EOF
+
+          rm -f deploy.tar.gz
+
+      - name: Health check
+        run: |
+          sleep 5
+          curl -sf https://olympus-ollama-cd.tail218dac.ts.net/api/health || exit 1
+          echo "Health check passed"
+
+      - name: Notify
+        if: always()
+        run: |
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "✅ Deployed successfully to https://olympus-ollama-cd.tail218dac.ts.net"
+          else
+            echo "❌ Deploy failed"
+          fi

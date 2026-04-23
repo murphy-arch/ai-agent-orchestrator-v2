@@ -1,0 +1,13 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1776861346285,
+      "tag": "0000_silly_living_tribunal",
+      "breakpoints": true
+    }
+  ]
+}

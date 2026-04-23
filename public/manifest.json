@@ -1,0 +1,14 @@
+{
+  "name": "AI Agent Orchestrator",
+  "short_name": "AI Agents",
+  "description": "Multi-stack AI Agent orchestration platform",
+  "theme_color": "#0d0d0f",
+  "background_color": "#0d0d0f",
+  "display": "standalone",
+  "scope": "/",
+  "start_url": "/",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "512x512", "type": "image/svg+xml" },
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}
