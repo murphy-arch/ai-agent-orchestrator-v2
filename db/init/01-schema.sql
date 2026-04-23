@@ -96,7 +96,7 @@ CREATE TABLE IF NOT EXISTS workflow_edges (
   stack_id INT NOT NULL,
   source_id INT NOT NULL,
   target_id INT NOT NULL,
-  condition VARCHAR(255),
+  `condition` VARCHAR(255),
   is_active BOOLEAN DEFAULT TRUE,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_edges_stack (stack_id)

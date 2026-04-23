@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { serve } from "@hono/node-server";
-import { trpcServer } from "@trpc/server/adapters/fetch";
+import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
 import { readFileSync } from "fs";
 import "dotenv/config";
 import { appRouter } from "./_app";
@@ -38,10 +38,12 @@ function createApp() {
 
   // tRPC handler
   app.use("/trpc/*", async (c) => {
-    return trpcServer({
+    return fetchRequestHandler({
       router: appRouter,
-      createContext: async () => createContext(c),
-    })(c);
+      req: c.req.raw,
+      endpoint: "/trpc",
+      createContext: () => createContext(c),
+    });
   });
 
   // ─── Health Check (with DB test) ───
