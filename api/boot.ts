@@ -3,6 +3,7 @@ import { cors } from "hono/cors";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { serve } from "@hono/node-server";
 import { trpcServer } from "@trpc/server/adapters/fetch";
+import { readFileSync } from "fs";
 import "dotenv/config";
 import { appRouter } from "./_app";
 import { createContext } from "./middleware";
@@ -154,7 +155,18 @@ function createApp() {
   // ─── Static File Serving (production) ───
   if (process.env.NODE_ENV === "production") {
     app.use("/*", serveStatic({ root: "./dist/public" }));
-    app.get("*", serveStatic({ path: "./dist/public/index.html" }));
+
+    // For React Router: serve index.html for all non-API routes
+    app.notFound((c) => {
+      if (c.req.path.startsWith("/api") || c.req.path.startsWith("/trpc")) {
+        return c.json({ error: "Not found" }, 404);
+      }
+      try {
+        return c.html(readFileSync("./dist/public/index.html", "utf-8"));
+      } catch {
+        return c.text("index.html not found", 500);
+      }
+    });
   }
 
   return app;
