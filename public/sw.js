@@ -1,4 +1,4 @@
-const CACHE_NAME = "ai-agent-orchestrator-v1";
+const CACHE_NAME = "ai-agent-orchestrator-v2"; // Bump this on every deploy to clear old caches
 const STATIC_ASSETS = [
   "/",
   "/index.html",
