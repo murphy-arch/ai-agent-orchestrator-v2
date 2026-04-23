@@ -15,6 +15,9 @@ import {
   Copy,
   Check,
   Settings2,
+  Lock,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { trpc } from "@/trpc";
 import { useStack } from "@/components/layout/StackLayout";
@@ -24,6 +27,7 @@ import { useStack } from "@/components/layout/StackLayout";
 function ApiKeysSection({ stackId, userRole }: { stackId: number; userRole: string }) {
   const utils = trpc.useUtils();
   const { data: settings, isLoading } = trpc.settings.getStackSettings.useQuery({ stackId });
+  const { data: mpStatus } = trpc.settings.hasMasterPassword.useQuery();
 
   const [showAddForm, setShowAddForm] = useState(false);
   const [provider, setProvider] = useState<"openai" | "anthropic" | "google">("openai");
@@ -31,6 +35,14 @@ function ApiKeysSection({ stackId, userRole }: { stackId: number; userRole: stri
   const [keyValue, setKeyValue] = useState("");
   const [error, setError] = useState("");
   const [copiedId, setCopiedId] = useState<number | null>(null);
+
+  // Master password state
+  const [masterPassword, setMasterPassword] = useState("");
+  const [mpModalOpen, setMpModalOpen] = useState(false);
+  const [mpMode, setMpMode] = useState<"set" | "verify">("verify");
+  const [mpError, setMpError] = useState("");
+  const [revealedKeys, setRevealedKeys] = useState<Record<number, string>>({});
+  const [isRevealed, setIsRevealed] = useState(false);
 
   const addMutation = trpc.settings.addApiKey.useMutation({
     onSuccess: () => {
@@ -49,6 +61,41 @@ function ApiKeysSection({ stackId, userRole }: { stackId: number; userRole: stri
     },
   });
 
+  const setMpMutation = trpc.settings.setMasterPassword.useMutation({
+    onSuccess: () => {
+      utils.settings.hasMasterPassword.invalidate();
+      setMpModalOpen(false);
+      setMasterPassword("");
+      setMpError("");
+    },
+    onError: (err) => setMpError(err.message),
+  });
+
+  const verifyMpMutation = trpc.settings.verifyMasterPassword.useMutation({
+    onSuccess: (data) => {
+      if (data.valid) {
+        setMpModalOpen(false);
+        setMasterPassword("");
+        setMpError("");
+        setIsRevealed(true);
+        // Load decrypted keys
+        utils.settings.listApiKeysDecrypted
+          .fetch({ stackId, masterPassword })
+          .then((keys) => {
+            const map: Record<number, string> = {};
+            keys.forEach((k) => {
+              map[k.id] = k.keyValue;
+            });
+            setRevealedKeys(map);
+          })
+          .catch(() => setIsRevealed(false));
+      } else {
+        setMpError(data.error || "Invalid master password");
+      }
+    },
+    onError: (err) => setMpError(err.message),
+  });
+
   const handleAdd = (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
@@ -59,11 +106,34 @@ function ApiKeysSection({ stackId, userRole }: { stackId: number; userRole: stri
     addMutation.mutate({ stackId, provider, keyLabel: label.trim(), keyValue: keyValue.trim() });
   };
 
-  const handleCopy = (id: number, value: string) => {
+  const handleCopy = (id: number) => {
+    const value = revealedKeys[id];
+    if (!value) return;
     navigator.clipboard.writeText(value).then(() => {
       setCopiedId(id);
       setTimeout(() => setCopiedId(null), 2000);
     });
+  };
+
+  const openMpModal = (mode: "set" | "verify") => {
+    setMpMode(mode);
+    setMpModalOpen(true);
+    setMpError("");
+    setMasterPassword("");
+  };
+
+  const handleMpSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setMpError("");
+    if (!masterPassword.trim()) {
+      setMpError("Password is required");
+      return;
+    }
+    if (mpMode === "set") {
+      setMpMutation.mutate({ password: masterPassword.trim() });
+    } else {
+      verifyMpMutation.mutate({ password: masterPassword.trim() });
+    }
   };
 
   const canManage = userRole === "owner" || userRole === "admin";
@@ -75,16 +145,92 @@ function ApiKeysSection({ stackId, userRole }: { stackId: number; userRole: stri
           <KeyRound className="h-4 w-4 text-gray-500" />
           API Keys
         </h2>
-        {canManage && (
-          <button
-            onClick={() => setShowAddForm((v) => !v)}
-            className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700"
-          >
-            <Plus className="h-3.5 w-3.5" />
-            Add Key
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {mpStatus?.set ? (
+            <button
+              onClick={() => (isRevealed ? setIsRevealed(false) : openMpModal("verify"))}
+              className="flex items-center gap-1 rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50"
+            >
+              {isRevealed ? (
+                <>
+                  <EyeOff className="h-3 w-3" /> Hide Values
+                </>
+              ) : (
+                <>
+                  <Eye className="h-3 w-3" /> Reveal
+                </>
+              )}
+            </button>
+          ) : (
+            <button
+              onClick={() => openMpModal("set")}
+              className="flex items-center gap-1 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-700 transition-colors hover:bg-amber-100"
+            >
+              <Lock className="h-3 w-3" /> Set Master Password
+            </button>
+          )}
+          {canManage && (
+            <button
+              onClick={() => setShowAddForm((v) => !v)}
+              className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Add Key
+            </button>
+          )}
+        </div>
       </div>
+
+      {/* Master Password Modal */}
+      {mpModalOpen && (
+        <div className="border-b border-gray-100 bg-gray-50/50 px-5 py-4">
+          <form onSubmit={handleMpSubmit} className="space-y-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-700">
+                {mpMode === "set" ? "Set Master Password" : "Enter Master Password"}
+              </label>
+              <input
+                type="password"
+                value={masterPassword}
+                onChange={(e) => setMasterPassword(e.target.value)}
+                placeholder={mpMode === "set" ? "Min 4 characters" : "Your master password"}
+                className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                autoFocus
+              />
+              {mpMode === "set" && (
+                <p className="mt-1 text-xs text-gray-500">
+                  This password protects all API key values. You will need it to view or copy keys.
+                </p>
+              )}
+            </div>
+            {mpError && (
+              <p className="flex items-center gap-1 text-xs text-red-600">
+                <AlertCircle className="h-3 w-3" />
+                {mpError}
+              </p>
+            )}
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setMpModalOpen(false)}
+                className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={setMpMutation.isPending || verifyMpMutation.isPending}
+                className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
+              >
+                {(setMpMutation.isPending || verifyMpMutation.isPending) && (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                )}
+                {mpMode === "set" ? "Set Password" : "Unlock"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {showAddForm && canManage && (
         <form onSubmit={handleAdd} className="border-b border-gray-100 bg-gray-50/50 px-5 py-4">
@@ -165,7 +311,6 @@ function ApiKeysSection({ stackId, userRole }: { stackId: number; userRole: stri
                 id: number;
                 provider: string;
                 keyLabel: string;
-                keyValue: string;
                 isActive: boolean;
               }) => (
                 <div key={key.id} className="flex items-center justify-between py-3">
@@ -177,21 +322,29 @@ function ApiKeysSection({ stackId, userRole }: { stackId: number; userRole: stri
                       <p className="text-sm font-medium text-gray-900">{key.keyLabel}</p>
                       <p className="text-xs text-gray-500">
                         {key.provider} · {key.isActive ? "Active" : "Inactive"}
+                        {isRevealed && revealedKeys[key.id] && (
+                          <span className="ml-2 font-mono text-xs text-gray-400">
+                            {revealedKeys[key.id].slice(0, 8)}···
+                            {revealedKeys[key.id].slice(-4)}
+                          </span>
+                        )}
                       </p>
                     </div>
                   </div>
                   <div className="flex items-center gap-1">
-                    <button
-                      onClick={() => handleCopy(key.id, key.keyValue)}
-                      className="rounded-md p-1.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
-                      title="Copy key"
-                    >
-                      {copiedId === key.id ? (
-                        <Check className="h-3.5 w-3.5 text-green-600" />
-                      ) : (
-                        <Copy className="h-3.5 w-3.5" />
-                      )}
-                    </button>
+                    {isRevealed && revealedKeys[key.id] && (
+                      <button
+                        onClick={() => handleCopy(key.id)}
+                        className="rounded-md p-1.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
+                        title="Copy key"
+                      >
+                        {copiedId === key.id ? (
+                          <Check className="h-3.5 w-3.5 text-green-600" />
+                        ) : (
+                          <Copy className="h-3.5 w-3.5" />
+                        )}
+                      </button>
+                    )}
                     {canManage && (
                       <button
                         onClick={() => deleteMutation.mutate({ stackId, keyId: key.id })}

@@ -63,6 +63,14 @@ export const aiAgents = mysqlTable("ai_agents", {
   updatedAt: timestamp("updated_at").defaultNow().onUpdateNow(),
 });
 
+// ─── Master Password (global, single row) ───
+export const masterPassword = mysqlTable("master_password", {
+  id: int("id").autoincrement().primaryKey(),
+  passwordHash: varchar("password_hash", { length: 255 }).notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow().onUpdateNow(),
+});
+
 // ─── API Keys (stack-scoped) ───
 export const apiKeys = mysqlTable("api_keys", {
   id: int("id").autoincrement().primaryKey(),
@@ -122,6 +130,20 @@ export const conversations = mysqlTable("conversations", {
   content: text("content").notNull(),
   source: varchar("source", { length: 50 }).default("web"), // web, telegram, slack, discord, webhook
   createdAt: timestamp("created_at").defaultNow(),
+});
+
+// ─── Agent Credentials (links agent to API key) ───
+export const agentCredentials = mysqlTable("agent_api_credentials", {
+  id: int("id").autoincrement().primaryKey(),
+  agentId: int("agent_id").notNull(),
+  credentialType: varchar("credential_type", { length: 100 }).notNull(),
+  apiKeyId: int("api_key_id"),
+  endpointOverride: varchar("endpoint_override", { length: 500 }),
+  modelOverride: varchar("model_override", { length: 255 }),
+  additionalConfig: text("additional_config"),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow().onUpdateNow(),
 });
 
 // ─── Agent Logs (stack-scoped) ───

@@ -24,6 +24,7 @@ interface AgentFormData {
   modelName: string;
   temperature: number;
   maxTokens: number;
+  apiKeyId: number | null;
 }
 
 const defaultForm: AgentFormData = {
@@ -35,6 +36,7 @@ const defaultForm: AgentFormData = {
   modelName: "gpt-4o",
   temperature: 70,
   maxTokens: 2048,
+  apiKeyId: null,
 };
 
 function hierarchyColor(role: string): string {
@@ -75,15 +77,22 @@ interface AgentModalProps {
     temperature: number | null;
     maxTokens: number | null;
   } | null;
+  apiKeys: { id: number; provider: string; keyLabel: string }[];
 }
 
-function AgentModal({ isOpen, onClose, agent }: AgentModalProps) {
+function AgentModal({ isOpen, onClose, agent, apiKeys }: AgentModalProps) {
   const { stackId } = useStack();
   const utils = trpc.useUtils();
   const isEditing = !!agent;
 
   const [form, setForm] = useState<AgentFormData>(defaultForm);
   const [error, setError] = useState("");
+
+  // Fetch agent credential when editing
+  const { data: credential } = trpc.agent.getCredential.useQuery(
+    { stackId, agentId: agent?.id ?? 0 },
+    { enabled: isEditing && !!agent }
+  );
 
   // Populate form when editing
   useEffect(() => {
@@ -97,11 +106,12 @@ function AgentModal({ isOpen, onClose, agent }: AgentModalProps) {
         modelName: agent.modelName ?? "gpt-4o",
         temperature: agent.temperature ?? 70,
         maxTokens: agent.maxTokens ?? 2048,
+        apiKeyId: credential?.apiKeyId ?? null,
       });
     } else {
       setForm(defaultForm);
     }
-  }, [agent]);
+  }, [agent, credential]);
 
   const createMutation = trpc.agent.create.useMutation({
     onSuccess: () => {
@@ -146,6 +156,7 @@ function AgentModal({ isOpen, onClose, agent }: AgentModalProps) {
       modelName: form.modelName.trim() || undefined,
       temperature: form.temperature,
       maxTokens: form.maxTokens,
+      apiKeyId: form.apiKeyId ?? undefined,
     };
 
     if (isEditing && agent) {
@@ -254,6 +265,31 @@ function AgentModal({ isOpen, onClose, agent }: AgentModalProps) {
               placeholder="e.g., gpt-4o, claude-3-5-sonnet"
               className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
             />
+          </div>
+
+          {/* API Key */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700">Linked API Key</label>
+            <div className="relative mt-1">
+              <select
+                value={form.apiKeyId ?? ""}
+                onChange={(e) =>
+                  setForm((f) => ({
+                    ...f,
+                    apiKeyId: e.target.value ? Number(e.target.value) : null,
+                  }))
+                }
+                className="w-full appearance-none rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              >
+                <option value="">None (select a key)</option>
+                {apiKeys.map((key) => (
+                  <option key={key.id} value={key.id}>
+                    {key.keyLabel} ({key.provider})
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-gray-400" />
+            </div>
           </div>
 
           {/* Temperature */}
@@ -373,6 +409,8 @@ export default function Agents() {
   const utils = trpc.useUtils();
 
   const { data: agents, isLoading } = trpc.agent.list.useQuery({ stackId });
+  const { data: settings } = trpc.settings.getStackSettings.useQuery({ stackId });
+  const apiKeys = settings?.apiKeys ?? [];
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingAgent, setEditingAgent] = useState<AgentModalProps["agent"]>(null);
@@ -530,6 +568,7 @@ export default function Agents() {
           setEditingAgent(null);
         }}
         agent={editingAgent}
+        apiKeys={apiKeys}
       />
 
       <DeleteConfirmModal

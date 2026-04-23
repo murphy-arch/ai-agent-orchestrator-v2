@@ -14,7 +14,7 @@ export default function Login() {
   const loginMutation = trpc.auth.login.useMutation({
     onSuccess: (data) => {
       localStorage.setItem("token", data.token);
-      window.location.href = "/dashboard";
+      navigate("/dashboard", { replace: true });
     },
     onError: (err) => setError(err.message),
   });
@@ -22,7 +22,7 @@ export default function Login() {
   const registerMutation = trpc.auth.register.useMutation({
     onSuccess: (data) => {
       localStorage.setItem("token", data.token);
-      window.location.href = "/dashboard";
+      navigate("/dashboard", { replace: true });
     },
     onError: (err) => setError(err.message),
   });

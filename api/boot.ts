@@ -177,6 +177,18 @@ function createApp() {
 async function boot() {
   console.log("[boot] Starting AI Agent Orchestrator v2.0.0...");
 
+  // Validate JWT secret
+  const jwtSecret = process.env.JWT_SECRET;
+  if (!jwtSecret || jwtSecret === "change-me-in-production") {
+    console.warn("[boot] WARNING: JWT_SECRET is not set or uses default value. Auth tokens are insecure!");
+  }
+
+  // Validate encryption key
+  const encKey = process.env.ENCRYPTION_KEY || process.env.APP_SECRET;
+  if (!encKey) {
+    console.warn("[boot] WARNING: ENCRYPTION_KEY or APP_SECRET is not set. API keys cannot be encrypted!");
+  }
+
   // Run migrations
   await migrateToMultiStack();
 

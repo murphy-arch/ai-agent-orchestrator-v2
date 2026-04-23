@@ -4,7 +4,42 @@ import { eq, and, desc } from "drizzle-orm";
 import { router, authedQuery } from "./middleware";
 import { verifyStackAccess } from "./lib/permissions";
 import { getDb } from "@db/connection";
-import { aiAgents } from "@db/schema";
+import { aiAgents, agentCredentials, apiKeys } from "@db/schema";
+import { decrypt } from "./lib/crypto";
+
+async function testProviderConnection(
+  credentialType: string,
+  apiKey: string,
+  model?: string
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const provider = credentialType.toLowerCase();
+    if (provider === "openai") {
+      const res = await fetch("https://api.openai.com/v1/models", {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      if (!res.ok) return { ok: false, error: `OpenAI error: ${res.status}` };
+      return { ok: true };
+    }
+    if (provider === "anthropic") {
+      const res = await fetch("https://api.anthropic.com/v1/models", {
+        headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+      });
+      if (!res.ok) return { ok: false, error: `Anthropic error: ${res.status}` };
+      return { ok: true };
+    }
+    if (provider === "google" || provider === "google ai") {
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`
+      );
+      if (!res.ok) return { ok: false, error: `Google AI error: ${res.status}` };
+      return { ok: true };
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+}
 
 export const agentRouter = router({
   // ─── List all agents in a stack ───
@@ -69,13 +104,14 @@ export const agentRouter = router({
         modelName: z.string().optional(),
         temperature: z.number().optional(),
         maxTokens: z.number().optional(),
+        apiKeyId: z.number().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
       const db = getDb();
       await verifyStackAccess(ctx.user.id, input.stackId);
 
-      const { stackId, ...agentData } = input;
+      const { stackId, apiKeyId, ...agentData } = input;
 
       const [result] = await db.insert(aiAgents).values({
         ...agentData,
@@ -84,6 +120,23 @@ export const agentRouter = router({
       });
 
       const agentId = Number(result.insertId);
+
+      // Link API key if provided
+      if (apiKeyId) {
+        const [key] = await db
+          .select()
+          .from(apiKeys)
+          .where(and(eq(apiKeys.id, apiKeyId), eq(apiKeys.stackId, stackId)))
+          .limit(1);
+        if (key) {
+          await db.insert(agentCredentials).values({
+            agentId,
+            credentialType: key.provider,
+            apiKeyId: key.id,
+            isActive: true,
+          });
+        }
+      }
 
       return { id: agentId };
     }),
@@ -103,39 +156,77 @@ export const agentRouter = router({
         temperature: z.number().optional(),
         maxTokens: z.number().optional(),
         isEnabled: z.boolean().optional(),
+        apiKeyId: z.number().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
       const db = getDb();
       await verifyStackAccess(ctx.user.id, input.stackId);
 
-      const updateData: Record<string, unknown> = {};
-      if (input.name !== undefined) updateData.name = input.name;
-      if (input.description !== undefined) updateData.description = input.description;
-      if (input.systemPrompt !== undefined) updateData.systemPrompt = input.systemPrompt;
-      if (input.hierarchyRole !== undefined) updateData.hierarchyRole = input.hierarchyRole;
-      if (input.modelProvider !== undefined) updateData.modelProvider = input.modelProvider;
-      if (input.modelName !== undefined) updateData.modelName = input.modelName;
-      if (input.temperature !== undefined) updateData.temperature = input.temperature;
-      if (input.maxTokens !== undefined) updateData.maxTokens = input.maxTokens;
-      if (input.isEnabled !== undefined) updateData.isEnabled = input.isEnabled;
+      const { stackId, agentId, apiKeyId, ...agentData } = input;
 
-      if (Object.keys(updateData).length === 0) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: "No fields to update",
-        });
+      const updateData: Record<string, unknown> = {};
+      if (agentData.name !== undefined) updateData.name = agentData.name;
+      if (agentData.description !== undefined) updateData.description = agentData.description;
+      if (agentData.systemPrompt !== undefined) updateData.systemPrompt = agentData.systemPrompt;
+      if (agentData.hierarchyRole !== undefined) updateData.hierarchyRole = agentData.hierarchyRole;
+      if (agentData.modelProvider !== undefined) updateData.modelProvider = agentData.modelProvider;
+      if (agentData.modelName !== undefined) updateData.modelName = agentData.modelName;
+      if (agentData.temperature !== undefined) updateData.temperature = agentData.temperature;
+      if (agentData.maxTokens !== undefined) updateData.maxTokens = agentData.maxTokens;
+      if (agentData.isEnabled !== undefined) updateData.isEnabled = agentData.isEnabled;
+
+      if (Object.keys(updateData).length > 0) {
+        await db
+          .update(aiAgents)
+          .set(updateData)
+          .where(
+            and(
+              eq(aiAgents.id, agentId),
+              eq(aiAgents.stackId, stackId)
+            )
+          );
       }
 
-      await db
-        .update(aiAgents)
-        .set(updateData)
-        .where(
-          and(
-            eq(aiAgents.id, input.agentId),
-            eq(aiAgents.stackId, input.stackId)
-          )
-        );
+      // Update credential link if apiKeyId provided
+      if (apiKeyId !== undefined) {
+        if (apiKeyId === null || apiKeyId === 0) {
+          // Remove credential
+          await db
+            .delete(agentCredentials)
+            .where(eq(agentCredentials.agentId, agentId));
+        } else {
+          const [key] = await db
+            .select()
+            .from(apiKeys)
+            .where(and(eq(apiKeys.id, apiKeyId), eq(apiKeys.stackId, stackId)))
+            .limit(1);
+          if (key) {
+            const [existing] = await db
+              .select()
+              .from(agentCredentials)
+              .where(eq(agentCredentials.agentId, agentId))
+              .limit(1);
+            if (existing) {
+              await db
+                .update(agentCredentials)
+                .set({
+                  credentialType: key.provider,
+                  apiKeyId: key.id,
+                  isActive: true,
+                })
+                .where(eq(agentCredentials.id, existing.id));
+            } else {
+              await db.insert(agentCredentials).values({
+                agentId,
+                credentialType: key.provider,
+                apiKeyId: key.id,
+                isActive: true,
+              });
+            }
+          }
+        }
+      }
 
       return { success: true };
     }),
@@ -152,6 +243,11 @@ export const agentRouter = router({
       const db = getDb();
       await verifyStackAccess(ctx.user.id, input.stackId);
 
+      // Delete credentials first
+      await db
+        .delete(agentCredentials)
+        .where(eq(agentCredentials.agentId, input.agentId));
+
       await db
         .delete(aiAgents)
         .where(
@@ -162,5 +258,79 @@ export const agentRouter = router({
         );
 
       return { success: true };
+    }),
+
+  // ─── Get agent credential ───
+  getCredential: authedQuery
+    .input(
+      z.object({
+        stackId: z.number(),
+        agentId: z.number(),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      const db = getDb();
+      await verifyStackAccess(ctx.user.id, input.stackId);
+
+      const [cred] = await db
+        .select()
+        .from(agentCredentials)
+        .where(eq(agentCredentials.agentId, input.agentId))
+        .limit(1);
+
+      if (!cred) return null;
+
+      const [key] = await db
+        .select({
+          id: apiKeys.id,
+          provider: apiKeys.provider,
+          keyLabel: apiKeys.keyLabel,
+        })
+        .from(apiKeys)
+        .where(eq(apiKeys.id, cred.apiKeyId ?? 0))
+        .limit(1);
+
+      return { ...cred, apiKey: key ?? null };
+    }),
+
+  // ─── Test agent credential connection ───
+  testCredential: authedQuery
+    .input(
+      z.object({
+        stackId: z.number(),
+        agentId: z.number(),
+        masterPassword: z.string(),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      const db = getDb();
+      await verifyStackAccess(ctx.user.id, input.stackId);
+
+      const [cred] = await db
+        .select()
+        .from(agentCredentials)
+        .where(eq(agentCredentials.agentId, input.agentId))
+        .limit(1);
+
+      if (!cred) return { ok: false, error: "No credential linked" };
+      if (!cred.apiKeyId) return { ok: false, error: "No API key linked" };
+
+      const [mp] = await db.select().from(masterPassword);
+      if (!mp) return { ok: false, error: "Master password not set" };
+
+      const { verifyPassword } = await import("./lib/crypto");
+      const valid = await verifyPassword(input.masterPassword, mp.passwordHash);
+      if (!valid) return { ok: false, error: "Invalid master password" };
+
+      const [key] = await db
+        .select()
+        .from(apiKeys)
+        .where(eq(apiKeys.id, cred.apiKeyId))
+        .limit(1);
+
+      if (!key) return { ok: false, error: "Linked API key not found" };
+
+      const apiKey = decrypt(key.keyValue);
+      return testProviderConnection(cred.credentialType, apiKey, cred.modelOverride || undefined);
     }),
 });

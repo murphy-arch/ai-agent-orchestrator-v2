@@ -1,4 +1,4 @@
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useStack } from "./StackLayout";
 import {
   Bot,
@@ -9,6 +9,7 @@ import {
   UserCircle,
   ChevronLeft,
   Terminal,
+  LogOut,
 } from "lucide-react";
 import type { ReactNode } from "react";
 
@@ -28,6 +29,7 @@ export default function AppLayout({
 }) {
   const { stackId } = useStack();
   const location = useLocation();
+  const navigate = useNavigate();
 
   const navItems = [
     { to: `/stacks/${stackId}/architecture`, icon: Workflow, label: "Architecture" },
