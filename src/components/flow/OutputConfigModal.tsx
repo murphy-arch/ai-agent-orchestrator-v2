@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { X, Send, Globe, MessageSquare, Mail, Smartphone, Zap } from "lucide-react";
 
 interface OutputConfig {
@@ -13,7 +13,12 @@ interface OutputConfig {
   smtpPort?: string;
   smtpUser?: string;
   smtpPass?: string;
+  gmailUser?: string;
+  gmailAppPassword?: string;
   headers?: Record<string, string>;
+  formatTemplate?: string;
+  retryCount?: number;
+  retryDelay?: number;
 }
 
 const TYPE_META: Record<string, { label: string; icon: typeof Globe; color: string; fields: string[] }> = {
@@ -21,9 +26,11 @@ const TYPE_META: Record<string, { label: string; icon: typeof Globe; color: stri
   telegram: { label: "Telegram", icon: MessageSquare, color: "#60A5FA", fields: ["botToken", "chatId"] },
   slack: { label: "Slack", icon: MessageSquare, color: "#A78BFA", fields: ["webhookUrl"] },
   discord: { label: "Discord", icon: MessageSquare, color: "#A78BFA", fields: ["webhookUrl"] },
-  email: { label: "Email", icon: Mail, color: "#F87171", fields: ["emailTo", "emailSubject", "smtpHost", "smtpPort", "smtpUser", "smtpPass"] },
+  email: { label: "Email (SMTP)", icon: Mail, color: "#F87171", fields: ["emailTo", "emailSubject", "smtpHost", "smtpPort", "smtpUser", "smtpPass"] },
+  gmail: { label: "Gmail", icon: Mail, color: "#EA4335", fields: ["gmailUser", "gmailAppPassword", "emailTo", "emailSubject"] },
   sms: { label: "SMS", icon: Smartphone, color: "#60A5FA", fields: ["webhookUrl"] },
   api: { label: "API", icon: Zap, color: "#3B6AFF", fields: ["url", "headers"] },
+  "google-drive": { label: "Google Drive", icon: Globe, color: "#34D399", fields: ["accessToken", "folderId", "fileName"] },
 };
 
 export default function OutputConfigModal({
@@ -38,33 +45,38 @@ export default function OutputConfigModal({
   onSave: (config: OutputConfig) => void;
 }) {
   const [type, setType] = useState<string>(initialConfig?.outputType || "webhook");
-  const [values, setValues] = useState<Record<string, string>>({});
+  const [values, setValues] = useState<Record<string, string>>(() => ({
+    url: initialConfig?.url || "",
+    botToken: initialConfig?.botToken || "",
+    chatId: initialConfig?.chatId || "",
+    webhookUrl: initialConfig?.webhookUrl || "",
+    emailTo: initialConfig?.emailTo || "",
+    emailSubject: initialConfig?.emailSubject || "",
+    smtpHost: initialConfig?.smtpHost || "",
+    smtpPort: initialConfig?.smtpPort || "",
+    smtpUser: initialConfig?.smtpUser || "",
+    smtpPass: initialConfig?.smtpPass || "",
+    gmailUser: (initialConfig as Record<string, string> | null)?.gmailUser || "",
+    gmailAppPassword: (initialConfig as Record<string, string> | null)?.gmailAppPassword || "",
+    accessToken: (initialConfig as Record<string, string> | null)?.accessToken || "",
+    folderId: (initialConfig as Record<string, string> | null)?.folderId || "",
+    fileName: (initialConfig as Record<string, string> | null)?.fileName || "",
+    formatTemplate: initialConfig?.formatTemplate || "",
+    retryCount: String(initialConfig?.retryCount ?? 0),
+    retryDelay: String(initialConfig?.retryDelay ?? 1000),
+  }));
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
-  useEffect(() => {
-    if (initialConfig) {
-      setType(initialConfig.outputType || "webhook");
-      setValues({
-        url: initialConfig.url || "",
-        botToken: initialConfig.botToken || "",
-        chatId: initialConfig.chatId || "",
-        webhookUrl: initialConfig.webhookUrl || "",
-        emailTo: initialConfig.emailTo || "",
-        emailSubject: initialConfig.emailSubject || "",
-        smtpHost: initialConfig.smtpHost || "",
-        smtpPort: initialConfig.smtpPort || "",
-        smtpUser: initialConfig.smtpUser || "",
-        smtpPass: initialConfig.smtpPass || "",
-      });
-    }
-  }, [initialConfig, isOpen]);
-
   const meta = TYPE_META[type];
-  const Icon = meta?.icon || Globe;
 
   const handleSave = () => {
-    const config: OutputConfig = { outputType: type, ...values };
+    const config: OutputConfig = {
+      outputType: type,
+      ...values,
+      retryCount: Number(values.retryCount || 0),
+      retryDelay: Number(values.retryDelay || 1000),
+    };
     onSave(config);
     onClose();
   };
@@ -211,6 +223,33 @@ export default function OutputConfigModal({
             </>
           )}
 
+          {meta.fields.includes("gmailUser") && (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label style={{ fontSize: "11px", fontWeight: 500, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Gmail Address</label>
+                <input
+                  type="email"
+                  value={values.gmailUser || ""}
+                  onChange={(e) => setValues({ ...values, gmailUser: e.target.value })}
+                  placeholder="you@gmail.com"
+                  className="w-full mt-1 px-3 py-2 rounded-lg border text-sm outline-none focus:ring-1"
+                  style={{ background: "var(--surface-secondary)", borderColor: "var(--border)", color: "var(--text-primary)" }}
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: "11px", fontWeight: 500, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.05em" }}>App Password</label>
+                <input
+                  type="password"
+                  value={values.gmailAppPassword || ""}
+                  onChange={(e) => setValues({ ...values, gmailAppPassword: e.target.value })}
+                  placeholder="xxxx xxxx xxxx xxxx"
+                  className="w-full mt-1 px-3 py-2 rounded-lg border text-sm outline-none focus:ring-1"
+                  style={{ background: "var(--surface-secondary)", borderColor: "var(--border)", color: "var(--text-primary)" }}
+                />
+              </div>
+            </div>
+          )}
+
           {meta.fields.includes("smtpHost") && (
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -259,6 +298,86 @@ export default function OutputConfigModal({
               </div>
             </div>
           )}
+
+          {meta.fields.includes("accessToken") && (
+            <>
+              <div>
+                <label style={{ fontSize: "11px", fontWeight: 500, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Google Access Token</label>
+                <input
+                  type="password"
+                  value={values.accessToken || ""}
+                  onChange={(e) => setValues({ ...values, accessToken: e.target.value })}
+                  placeholder="ya29.a0AfH6SMB..."
+                  className="w-full mt-1 px-3 py-2 rounded-lg border text-sm outline-none focus:ring-1"
+                  style={{ background: "var(--surface-secondary)", borderColor: "var(--border)", color: "var(--text-primary)" }}
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: "11px", fontWeight: 500, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Folder ID (optional)</label>
+                <input
+                  type="text"
+                  value={values.folderId || ""}
+                  onChange={(e) => setValues({ ...values, folderId: e.target.value })}
+                  placeholder="1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"
+                  className="w-full mt-1 px-3 py-2 rounded-lg border text-sm outline-none focus:ring-1"
+                  style={{ background: "var(--surface-secondary)", borderColor: "var(--border)", color: "var(--text-primary)" }}
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: "11px", fontWeight: 500, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.05em" }}>File Name</label>
+                <input
+                  type="text"
+                  value={values.fileName || ""}
+                  onChange={(e) => setValues({ ...values, fileName: e.target.value })}
+                  placeholder="agent-output.txt"
+                  className="w-full mt-1 px-3 py-2 rounded-lg border text-sm outline-none focus:ring-1"
+                  style={{ background: "var(--surface-secondary)", borderColor: "var(--border)", color: "var(--text-primary)" }}
+                />
+              </div>
+            </>
+          )}
+
+          {/* Format Template */}
+          <div>
+            <label style={{ fontSize: "11px", fontWeight: 500, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Format Template (optional)</label>
+            <textarea
+              value={values.formatTemplate || ""}
+              onChange={(e) => setValues({ ...values, formatTemplate: e.target.value })}
+              placeholder="Hi {{user}}, here's the result:&#10;&#10;{{response}}"
+              rows={3}
+              className="w-full mt-1 px-3 py-2 rounded-lg border text-sm outline-none focus:ring-1 resize-none"
+              style={{ background: "var(--surface-secondary)", borderColor: "var(--border)", color: "var(--text-primary)" }}
+            />
+            <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: 4 }}>Use {'{{response}}'} for agent output. Leave empty to send raw response.</p>
+          </div>
+
+          {/* Retry Settings */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label style={{ fontSize: "11px", fontWeight: 500, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Retry Count</label>
+              <input
+                type="number"
+                min={0}
+                max={5}
+                value={values.retryCount || "0"}
+                onChange={(e) => setValues({ ...values, retryCount: e.target.value })}
+                className="w-full mt-1 px-3 py-2 rounded-lg border text-sm outline-none focus:ring-1"
+                style={{ background: "var(--surface-secondary)", borderColor: "var(--border)", color: "var(--text-primary)" }}
+              />
+            </div>
+            <div>
+              <label style={{ fontSize: "11px", fontWeight: 500, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Retry Delay (ms)</label>
+              <input
+                type="number"
+                min={500}
+                step={500}
+                value={values.retryDelay || "1000"}
+                onChange={(e) => setValues({ ...values, retryDelay: e.target.value })}
+                className="w-full mt-1 px-3 py-2 rounded-lg border text-sm outline-none focus:ring-1"
+                style={{ background: "var(--surface-secondary)", borderColor: "var(--border)", color: "var(--text-primary)" }}
+              />
+            </div>
+          </div>
 
           {/* Test Result */}
           {testResult && (

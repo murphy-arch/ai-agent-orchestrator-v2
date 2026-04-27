@@ -10,7 +10,7 @@ const hierarchyColors: Record<string, string> = {
 };
 
 const AgentNode = memo(({ data, selected }: { data: AgentNodeData; selected?: boolean }) => {
-  const hColor = hierarchyColors[data.hierarchyRole] || hierarchyColors.worker;
+  const hColor = hierarchyColors[data.hierarchyRole || "worker"] || hierarchyColors.worker;
 
   return (
     <div

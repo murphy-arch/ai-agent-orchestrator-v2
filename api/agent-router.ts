@@ -4,41 +4,15 @@ import { eq, and, desc } from "drizzle-orm";
 import { router, authedQuery } from "./middleware";
 import { verifyStackAccess } from "./lib/permissions";
 import { getDb } from "@db/connection";
-import { aiAgents, agentCredentials, apiKeys } from "@db/schema";
+import { aiAgents, agentCredentials, apiKeys, masterPassword, soulTemplates, agentSouls } from "@db/schema";
 import { decrypt } from "./lib/crypto";
+import { testProviderConnection } from "./lib/llm-provider";
 
-async function testProviderConnection(
-  credentialType: string,
-  apiKey: string,
-  model?: string
-): Promise<{ ok: boolean; error?: string }> {
-  try {
-    const provider = credentialType.toLowerCase();
-    if (provider === "openai") {
-      const res = await fetch("https://api.openai.com/v1/models", {
-        headers: { Authorization: `Bearer ${apiKey}` },
-      });
-      if (!res.ok) return { ok: false, error: `OpenAI error: ${res.status}` };
-      return { ok: true };
-    }
-    if (provider === "anthropic") {
-      const res = await fetch("https://api.anthropic.com/v1/models", {
-        headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
-      });
-      if (!res.ok) return { ok: false, error: `Anthropic error: ${res.status}` };
-      return { ok: true };
-    }
-    if (provider === "google" || provider === "google ai") {
-      const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`
-      );
-      if (!res.ok) return { ok: false, error: `Google AI error: ${res.status}` };
-      return { ok: true };
-    }
-    return { ok: true };
-  } catch (e) {
-    return { ok: false, error: (e as Error).message };
-  }
+function slugify(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
 }
 
 export const agentRouter = router({
@@ -105,16 +79,30 @@ export const agentRouter = router({
         temperature: z.number().optional(),
         maxTokens: z.number().optional(),
         apiKeyId: z.number().optional(),
+        soulTemplateId: z.number().optional(),
+        agentFunctionId: z.number().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
       const db = getDb();
       await verifyStackAccess(ctx.user.id, input.stackId);
 
-      const { stackId, apiKeyId, ...agentData } = input;
+      const { stackId, apiKeyId, soulTemplateId, agentFunctionId, ...agentData } = input;
+      const slug = slugify(agentData.name);
+      const agentType = agentData.hierarchyRole ?? "worker";
+
+      // Personalize system prompt with agent name if function template was used
+      const systemPrompt = agentData.systemPrompt?.replace(
+        /\{\{AGENT_NAME\}\}/g,
+        agentData.name
+      );
 
       const [result] = await db.insert(aiAgents).values({
         ...agentData,
+        systemPrompt,
+        slug,
+        agentType,
+        functionId: agentFunctionId ?? null,
         stackId,
         createdBy: ctx.user.id,
       });
@@ -133,6 +121,28 @@ export const agentRouter = router({
             agentId,
             credentialType: key.provider,
             apiKeyId: key.id,
+            isActive: true,
+          });
+        }
+      }
+
+      // Create personalized soul copy if template selected
+      if (soulTemplateId) {
+        const [template] = await db
+          .select()
+          .from(soulTemplates)
+          .where(eq(soulTemplates.id, soulTemplateId))
+          .limit(1);
+        if (template) {
+          const personalizedContent = template.content.replace(
+            /\{\{AGENT_NAME\}\}/g,
+            agentData.name
+          );
+          await db.insert(agentSouls).values({
+            agentId,
+            templateId: template.id,
+            name: `${template.name} (${agentData.name})`,
+            content: personalizedContent,
             isActive: true,
           });
         }
@@ -243,10 +253,25 @@ export const agentRouter = router({
       const db = getDb();
       await verifyStackAccess(ctx.user.id, input.stackId);
 
+      // Verify agent belongs to this stack before deleting anything
+      const [agent] = await db
+        .select({ id: aiAgents.id })
+        .from(aiAgents)
+        .where(and(eq(aiAgents.id, input.agentId), eq(aiAgents.stackId, input.stackId)))
+        .limit(1);
+      if (!agent) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Agent not found in this stack" });
+      }
+
       // Delete credentials first
       await db
         .delete(agentCredentials)
         .where(eq(agentCredentials.agentId, input.agentId));
+
+      // Delete agent's personalized soul copy
+      await db
+        .delete(agentSouls)
+        .where(eq(agentSouls.agentId, input.agentId));
 
       await db
         .delete(aiAgents)
@@ -258,6 +283,27 @@ export const agentRouter = router({
         );
 
       return { success: true };
+    }),
+
+  // ─── Get agent soul ───
+  getSoul: authedQuery
+    .input(
+      z.object({
+        stackId: z.number(),
+        agentId: z.number(),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      const db = getDb();
+      await verifyStackAccess(ctx.user.id, input.stackId);
+
+      const [soul] = await db
+        .select()
+        .from(agentSouls)
+        .where(eq(agentSouls.agentId, input.agentId))
+        .limit(1);
+
+      return soul ?? null;
     }),
 
   // ─── Get agent credential ───

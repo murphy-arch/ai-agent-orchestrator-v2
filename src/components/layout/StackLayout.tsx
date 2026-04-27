@@ -1,15 +1,8 @@
-import { createContext, useContext, useEffect } from "react";
+import { useEffect } from "react";
 import { Outlet, useParams, Navigate } from "react-router-dom";
 import { trpc } from "@/trpc";
 import AppLayout from "./AppLayout";
-
-export const StackContext = createContext<{ stackId: number } | null>(null);
-
-export function useStack() {
-  const ctx = useContext(StackContext);
-  if (!ctx) throw new Error("useStack must be used within StackLayout");
-  return ctx;
-}
+import { StackContext } from "./StackContext";
 
 export default function StackLayout() {
   const { stackId } = useParams<{ stackId: string }>();

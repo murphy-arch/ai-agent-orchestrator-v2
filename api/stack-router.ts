@@ -4,7 +4,7 @@ import { eq, and, desc, asc, sql } from "drizzle-orm";
 import { router, authedQuery } from "./middleware";
 import { verifyStackAccess, verifyStackAdmin, verifyStackOwner } from "./lib/permissions";
 import { getDb } from "@db/connection";
-import { stacks, stackMembers, users, aiAgents, conversations, agentLogs } from "@db/schema";
+import { stacks, stackMembers, users, aiAgents, conversations } from "@db/schema";
 
 export const stackRouter = router({
   // ─── List all stacks where user is a member ───

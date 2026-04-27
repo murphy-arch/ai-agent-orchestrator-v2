@@ -10,6 +10,15 @@ import UserSettings from "./pages/UserSettings";
 import SetupGuide from "./pages/SetupGuide";
 import Login from "./pages/Login";
 import AgentConsole from "./pages/AgentConsole";
+import Memory from "./pages/Memory";
+import Schedules from "./pages/Schedules";
+import KnowledgeBase from "./pages/KnowledgeBase";
+import Templates from "./pages/Templates";
+import Blueprints from "./pages/Blueprints";
+import ApiKeys from "./pages/ApiKeys";
+import Teams from "./pages/Teams";
+import Database from "./pages/Database";
+import { Loader2 } from "lucide-react";
 
 function LegacyRedirect({ to }: { to: string }) {
   const lastStackId = localStorage.getItem("lastStackId");
@@ -20,9 +29,19 @@ function LegacyRedirect({ to }: { to: string }) {
 }
 
 function App() {
-  const { data: user } = trpc.auth.me.useQuery();
+  const { data: user, isLoading, error } = trpc.auth.me.useQuery();
+  console.log("[App] auth.me state:", { isLoading, hasUser: !!user, error: error?.message });
+
+  if (isLoading) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-background">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
 
   if (!user) {
+    console.log("[App] rendering login routes (user is null)");
     return (
       <Routes>
         <Route path="/login" element={<Login />} />
@@ -45,6 +64,14 @@ function App() {
       <Route path="/stacks/:stackId" element={<StackLayout />}>
         <Route path="agents" element={<Agents />} />
         <Route path="architecture" element={<Architecture />} />
+        <Route path="memory" element={<Memory />} />
+        <Route path="schedules" element={<Schedules />} />
+        <Route path="knowledge" element={<KnowledgeBase />} />
+        <Route path="templates" element={<Templates />} />
+        <Route path="blueprints" element={<Blueprints />} />
+        <Route path="api-keys" element={<ApiKeys />} />
+        <Route path="teams" element={<Teams />} />
+        <Route path="database" element={<Database />} />
         <Route path="analytics" element={<Analytics />} />
         <Route path="settings" element={<Settings />} />
         <Route path="console" element={<AgentConsole />} />

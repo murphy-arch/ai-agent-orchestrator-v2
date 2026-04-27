@@ -20,7 +20,7 @@ import {
   EyeOff,
 } from "lucide-react";
 import { trpc } from "@/trpc";
-import { useStack } from "@/components/layout/StackLayout";
+import { useStack } from "@/components/layout/StackContext";
 
 // ─── API Keys Section ───
 
@@ -589,11 +589,20 @@ function StackInfoSection({ stack }: { stack?: { name: string; slug: string; sta
 
 // ─── Main Settings Page ───
 
+type Tab = "general" | "keys" | "members";
+
+const TAB_CONFIG: { id: Tab; label: string; icon: typeof Info }[] = [
+  { id: "general", label: "General", icon: Info },
+  { id: "keys", label: "API Keys", icon: KeyRound },
+  { id: "members", label: "Members", icon: Users },
+];
+
 export default function Settings() {
   const { stackId } = useStack();
   const { data: stack } = trpc.stack.getById.useQuery({ stackId });
   const { data: members } = trpc.stack.getMembers.useQuery({ stackId });
   const { data: me } = trpc.auth.me.useQuery();
+  const [activeTab, setActiveTab] = useState<Tab>("general");
 
   const myMembership = members?.find((m) => m.userId === me?.id);
   const userRole = myMembership?.role ?? "member";
@@ -611,11 +620,32 @@ export default function Settings() {
         </div>
       </div>
 
+      {/* Tabs */}
+      <div className="mb-6 flex items-center gap-1 rounded-lg border border-gray-200 bg-white p-1 w-fit">
+        {TAB_CONFIG.map((tab) => {
+          const Icon = tab.icon;
+          return (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                activeTab === tab.id
+                  ? "bg-blue-600 text-white"
+                  : "text-gray-600 hover:bg-gray-50"
+              }`}
+            >
+              <Icon className="h-3.5 w-3.5" />
+              {tab.label}
+            </button>
+          );
+        })}
+      </div>
+
       {/* Content */}
       <div className="space-y-6">
-        <StackInfoSection stack={stack} />
-        <ApiKeysSection stackId={stackId} userRole={userRole} />
-        <MembersSection stackId={stackId} userRole={userRole} />
+        {activeTab === "general" && <StackInfoSection stack={stack} />}
+        {activeTab === "keys" && <ApiKeysSection stackId={stackId} userRole={userRole} />}
+        {activeTab === "members" && <MembersSection stackId={stackId} userRole={userRole} />}
       </div>
     </div>
   );

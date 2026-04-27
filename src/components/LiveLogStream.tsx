@@ -25,7 +25,7 @@ export default function LiveLogStream({ agentId, onClose }: { agentId?: number; 
   const [filter, setFilter] = useState<string>("all");
   const [isConnected, setIsConnected] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const reconnectTimeout = useRef<ReturnType<typeof setTimeout>>();
+  const reconnectTimeout = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const connect = useCallback(() => {
     const url = agentId

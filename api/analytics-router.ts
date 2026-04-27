@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { eq, and, desc, sql } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { router, authedQuery } from "./middleware";
 import { verifyStackAccess } from "./lib/permissions";
 import { getDb } from "@db/connection";
@@ -47,7 +47,7 @@ export const analyticsRouter = router({
         );
 
       // Messages by agent (grouped)
-      const messagesByAgent = await db
+      const messagesByAgentRaw = await db
         .select({
           agentId: conversations.agentId,
           count: sql<number>`count(*)`,
@@ -61,13 +61,21 @@ export const analyticsRouter = router({
         )
         .groupBy(conversations.agentId);
 
+      const messagesByAgent = messagesByAgentRaw.map((a) => {
+        const agent = agents.find((ag) => ag.id === a.agentId);
+        return {
+          agentName: agent?.name ?? "Unknown",
+          count: a.count,
+        };
+      });
+
       // Messages by day (last N days)
       const daysMap = { "24h": 1, "7d": 7, "30d": 30 };
       const days = daysMap[input.period];
 
       const messagesByDay = await db
         .select({
-          day: sql<string>`date(${conversations.createdAt})`,
+          date: sql<string>`date(${conversations.createdAt})`,
           count: sql<number>`count(*)`,
         })
         .from(conversations)

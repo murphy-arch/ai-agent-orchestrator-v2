@@ -2,9 +2,13 @@ import { create } from "zustand";
 
 export interface AgentNodeData {
   name?: string;
+  agentName?: string;
   hierarchyRole?: string;
   connectedModel?: string;
   modelName?: string;
+  model?: string;
+  status?: string;
+  spawnMode?: string;
   isEnabled?: boolean;
   hasCredentials?: boolean;
   [key: string]: unknown;
@@ -13,7 +17,10 @@ export interface AgentNodeData {
 export interface InputNodeData {
   inputType?: string;
   label?: string;
+  sourceName?: string;
+  connectionStatus?: string;
   isActive?: boolean;
+  hasCredentials?: boolean;
   [key: string]: unknown;
 }
 

@@ -132,13 +132,13 @@ export default function SetupGuide() {
                 <p className="mt-1 text-sm leading-relaxed text-gray-500">
                   {step.description}
                 </p>
-                <a
-                  href={step.linkHref}
+                <Link
+                  to={step.linkHref}
                   className="mt-3 inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 transition-colors hover:text-blue-700"
                 >
                   {step.linkText}
                   <ArrowRight className="h-3.5 w-3.5" />
-                </a>
+                </Link>
               </div>
             </div>
           ))}

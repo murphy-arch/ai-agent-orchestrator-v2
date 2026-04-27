@@ -3,6 +3,7 @@ import { TRPCError } from "@trpc/server";
 import { eq } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { SignJWT } from "jose";
+import { randomUUID } from "crypto";
 import { router, publicQuery } from "./middleware";
 import { getDb } from "@db/connection";
 import { users } from "@db/schema";
@@ -44,6 +45,7 @@ export const authRouter = router({
 
       const passwordHash = await bcrypt.hash(input.password, 12);
       const [result] = await db.insert(users).values({
+        unionId: randomUUID(),
         email: input.email,
         passwordHash,
         name: input.name || input.email.split("@")[0],
@@ -53,7 +55,7 @@ export const authRouter = router({
       const userId = Number(result.insertId);
       const token = await createToken(userId);
 
-      return { token, user: { id: userId, email: input.email, name: input.name } };
+      return { token, user: { id: userId, email: input.email, name: input.name, timezone: "UTC" } };
     }),
 
   login: publicQuery

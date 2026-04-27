@@ -13,6 +13,7 @@ import {
   X,
   AlertCircle,
 } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
 import { trpc } from "@/trpc";
 import { GlobalChatWidget } from "@/components/GlobalChatWidget";
 
@@ -29,6 +30,7 @@ function CreateStackModal({ isOpen, onClose }: CreateStackModalProps) {
 
   const createMutation = trpc.stack.create.useMutation({
     onSuccess: () => {
+      console.log("[CreateStack] stack created successfully");
       utils.stack.list.invalidate();
       setName("");
       setDescription("");
@@ -36,6 +38,7 @@ function CreateStackModal({ isOpen, onClose }: CreateStackModalProps) {
       onClose();
     },
     onError: (err) => {
+      console.error("[CreateStack] error:", err.message);
       setError(err.message);
     },
   });
@@ -49,6 +52,7 @@ function CreateStackModal({ isOpen, onClose }: CreateStackModalProps) {
       setError("Stack name is required");
       return;
     }
+    console.log("[CreateStack] submitting:", { name: name.trim(), description: description.trim() || undefined });
     createMutation.mutate({
       name: name.trim(),
       description: description.trim() || undefined,
@@ -246,8 +250,28 @@ export default function Dashboard() {
       {/* Content */}
       <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
         {isLoading ? (
-          <div className="flex h-64 items-center justify-center">
-            <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="flex flex-col rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+                <div className="mb-3 flex items-start justify-between">
+                  <div className="flex items-center gap-2">
+                    <Skeleton className="h-10 w-10 rounded-lg" />
+                    <div>
+                      <Skeleton className="h-4 w-32 mb-1" />
+                      <Skeleton className="h-3 w-20" />
+                    </div>
+                  </div>
+                  <Skeleton className="h-5 w-14 rounded-full" />
+                </div>
+                <Skeleton className="h-3 w-full mb-4" />
+                <div className="mb-4 flex items-center gap-4">
+                  <Skeleton className="h-4 w-20" />
+                  <Skeleton className="h-4 w-20" />
+                  <Skeleton className="h-4 w-16 ml-auto rounded-full" />
+                </div>
+                <Skeleton className="h-9 w-full rounded-lg" />
+              </div>
+            ))}
           </div>
         ) : !stacks || stacks.length === 0 ? (
           <div className="flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-gray-200 bg-white py-20">
@@ -258,6 +282,22 @@ export default function Dashboard() {
             <p className="mt-1 max-w-sm text-center text-sm text-gray-500">
               Create your first AI agent stack to start orchestrating intelligent workflows.
             </p>
+            {/* Quick-start steps */}
+            <div className="mt-6 grid gap-3 text-left">
+              {[
+                { step: "1", text: "Create a stack (a workspace for your agents)" },
+                { step: "2", text: "Add AI agents with roles and API keys" },
+                { step: "3", text: "Design workflows on the Architecture canvas" },
+                { step: "4", text: "Run and monitor from Analytics & Console" },
+              ].map((item) => (
+                <div key={item.step} className="flex items-center gap-3 text-sm text-gray-600">
+                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-blue-100 text-[10px] font-bold text-blue-700">
+                    {item.step}
+                  </span>
+                  {item.text}
+                </div>
+              ))}
+            </div>
             <button
               onClick={() => setShowCreateModal(true)}
               className="mt-6 flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-blue-700"

@@ -17,7 +17,7 @@ const inputIcons: Record<string, { icon: typeof MessageSquare; color: string }> 
 };
 
 const InputNode = memo(({ data, selected }: { data: InputNodeData; selected?: boolean }) => {
-  const config = inputIcons[data.inputType] || inputIcons.custom;
+  const config = inputIcons[data.inputType || "custom"] || inputIcons.custom;
   const Icon = config.icon;
   const statusColor =
     data.connectionStatus === "connected"

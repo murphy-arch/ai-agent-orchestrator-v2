@@ -11,9 +11,13 @@ import {
   Cpu,
   Thermometer,
   Hash,
+  ChevronDown,
+  Search,
+  SlidersHorizontal,
 } from "lucide-react";
 import { trpc } from "@/trpc";
-import { useStack } from "@/components/layout/StackLayout";
+import { useStack } from "@/components/layout/StackContext";
+import { LabelWithHelp } from "@/components/HelpTooltip";
 
 interface AgentFormData {
   name: string;
@@ -25,7 +29,15 @@ interface AgentFormData {
   temperature: number;
   maxTokens: number;
   apiKeyId: number | null;
+  soulTemplateId: number | null;
+  agentFunctionId: number | null;
 }
+
+const MODEL_OPTIONS: Record<string, string[]> = {
+  openai: ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo"],
+  anthropic: ["claude-3-5-sonnet", "claude-3-opus", "claude-3-sonnet", "claude-3-haiku"],
+  google: ["gemini-1.5-pro", "gemini-1.5-flash", "gemini-pro"],
+};
 
 const defaultForm: AgentFormData = {
   name: "",
@@ -37,6 +49,8 @@ const defaultForm: AgentFormData = {
   temperature: 70,
   maxTokens: 2048,
   apiKeyId: null,
+  soulTemplateId: null,
+  agentFunctionId: null,
 };
 
 function hierarchyColor(role: string): string {
@@ -94,6 +108,12 @@ function AgentModal({ isOpen, onClose, agent, apiKeys }: AgentModalProps) {
     { enabled: isEditing && !!agent }
   );
 
+  const { data: soulTemplates } = trpc.soulTemplate.list.useQuery();
+  const { data: agentFunctions } = trpc.agentFunction.list.useQuery(
+    { hierarchyRole: form.hierarchyRole },
+    { enabled: !isEditing }
+  );
+
   // Populate form when editing
   useEffect(() => {
     if (agent) {
@@ -107,6 +127,8 @@ function AgentModal({ isOpen, onClose, agent, apiKeys }: AgentModalProps) {
         temperature: agent.temperature ?? 70,
         maxTokens: agent.maxTokens ?? 2048,
         apiKeyId: credential?.apiKeyId ?? null,
+        soulTemplateId: null,
+        agentFunctionId: null,
       });
     } else {
       setForm(defaultForm);
@@ -157,6 +179,8 @@ function AgentModal({ isOpen, onClose, agent, apiKeys }: AgentModalProps) {
       temperature: form.temperature,
       maxTokens: form.maxTokens,
       apiKeyId: form.apiKeyId ?? undefined,
+      soulTemplateId: form.soulTemplateId ?? undefined,
+      agentFunctionId: form.agentFunctionId ?? undefined,
     };
 
     if (isEditing && agent) {
@@ -186,9 +210,7 @@ function AgentModal({ isOpen, onClose, agent, apiKeys }: AgentModalProps) {
         <form onSubmit={handleSubmit} className="space-y-4">
           {/* Name */}
           <div>
-            <label className="block text-sm font-medium text-gray-700">
-              Name <span className="text-red-500">*</span>
-            </label>
+            <LabelWithHelp label="Name" helpText="A unique name for this agent. Used to identify it across the system." required />
             <input
               type="text"
               value={form.name}
@@ -199,9 +221,89 @@ function AgentModal({ isOpen, onClose, agent, apiKeys }: AgentModalProps) {
             />
           </div>
 
-          {/* Description */}
+          {/* Hierarchy Role — first after Name */}
           <div>
-            <label className="block text-sm font-medium text-gray-700">Description</label>
+            <LabelWithHelp label="Hierarchy Role" helpText="Determines how this agent fits into multi-agent teams. Orchestrators delegate to Managers, who delegate to Workers. Workers perform the actual tasks." />
+            <select
+              value={form.hierarchyRole}
+              onChange={(e) => {
+                const role = e.target.value as AgentFormData["hierarchyRole"];
+                setForm((f) => ({
+                  ...f,
+                  hierarchyRole: role,
+                  // Reset function template when hierarchy changes
+                  agentFunctionId: null,
+                  description: "",
+                  systemPrompt: "",
+                }));
+              }}
+              className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            >
+              <option value="orchestrator">Orchestrator</option>
+              <option value="manager">Manager</option>
+              <option value="worker">Worker</option>
+            </select>
+          </div>
+
+          {/* Function Template — linked to hierarchy (create only) */}
+          {!isEditing && form.hierarchyRole !== "orchestrator" && (
+            <div>
+              <LabelWithHelp label={`Role / Function Template (${form.hierarchyRole})`} helpText="Pre-built role definitions that auto-fill the agent's description, system prompt, and recommended model. Filtered by hierarchy role." />
+              <div className="relative mt-1">
+                <select
+                  value={form.agentFunctionId ?? ""}
+                  onChange={(e) => {
+                    const id = e.target.value ? Number(e.target.value) : null;
+                    const selected = agentFunctions?.find((fn: NonNullable<typeof agentFunctions>[number]) => fn.id === id);
+                    if (selected) {
+                      setForm((f) => ({
+                        ...f,
+                        agentFunctionId: id,
+                        description: selected.description ?? "",
+                        systemPrompt: selected.recommendedPrompt ?? "",
+                        modelProvider: (selected.recommendedProvider as AgentFormData["modelProvider"]) ?? f.modelProvider,
+                        modelName: selected.recommendedModel ?? f.modelName,
+                      }));
+                    } else {
+                      setForm((f) => ({ ...f, agentFunctionId: null, description: "", systemPrompt: "" }));
+                    }
+                  }}
+                  className="w-full appearance-none rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                >
+                  <option value="">None (custom role)</option>
+                  {agentFunctions?.map((fn: NonNullable<typeof agentFunctions>[number]) => (
+                    <option key={fn.id} value={fn.id}>
+                      {fn.name}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-gray-400" />
+              </div>
+              {form.agentFunctionId && (
+                <div className="mt-2 rounded-lg bg-gray-50 p-2.5">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 mb-1">Required Skills</p>
+                  <div className="flex flex-wrap gap-1">
+                    {((agentFunctions?.find((fn: NonNullable<typeof agentFunctions>[number]) => fn.id === form.agentFunctionId)?.skills as string[]) ?? []).map((skill: string) => (
+                      <span key={skill} className="rounded bg-blue-100 px-2 py-0.5 text-[10px] text-blue-700">
+                        {skill}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Orchestrator note */}
+          {!isEditing && form.hierarchyRole === "orchestrator" && (
+            <div className="rounded-lg bg-purple-50 p-3 text-xs text-purple-700">
+              Orchestrators coordinate other agents and do not use role/function templates.
+            </div>
+          )}
+
+          {/* Function */}
+          <div>
+            <LabelWithHelp label="Function" helpText="A short description of what this agent does. This helps you and other team members understand the agent's purpose at a glance." />
             <input
               type="text"
               value={form.description}
@@ -213,7 +315,7 @@ function AgentModal({ isOpen, onClose, agent, apiKeys }: AgentModalProps) {
 
           {/* System Prompt */}
           <div>
-            <label className="block text-sm font-medium text-gray-700">System Prompt</label>
+            <LabelWithHelp label="System Prompt" helpText="The core instructions given to the AI model. This defines the agent's behavior, tone, constraints, and how it should respond to user messages. Think of it as the agent's job description." />
             <textarea
               value={form.systemPrompt}
               onChange={(e) => setForm((f) => ({ ...f, systemPrompt: e.target.value }))}
@@ -223,30 +325,19 @@ function AgentModal({ isOpen, onClose, agent, apiKeys }: AgentModalProps) {
             />
           </div>
 
-          {/* Hierarchy Role */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Hierarchy Role</label>
-            <select
-              value={form.hierarchyRole}
-              onChange={(e) =>
-                setForm((f) => ({ ...f, hierarchyRole: e.target.value as AgentFormData["hierarchyRole"] }))
-              }
-              className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-            >
-              <option value="orchestrator">Orchestrator</option>
-              <option value="manager">Manager</option>
-              <option value="worker">Worker</option>
-            </select>
-          </div>
-
           {/* Model Provider */}
           <div>
-            <label className="block text-sm font-medium text-gray-700">Model Provider</label>
+            <LabelWithHelp label="Model Provider" helpText="The AI company that hosts the model. Each provider has different models, pricing, and capabilities. You need a valid API key for the provider you choose." />
             <select
               value={form.modelProvider}
-              onChange={(e) =>
-                setForm((f) => ({ ...f, modelProvider: e.target.value as AgentFormData["modelProvider"] }))
-              }
+              onChange={(e) => {
+                const provider = e.target.value as AgentFormData["modelProvider"];
+                setForm((f) => ({
+                  ...f,
+                  modelProvider: provider,
+                  modelName: MODEL_OPTIONS[provider]?.[0] ?? "",
+                }));
+              }}
               className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
             >
               <option value="openai">OpenAI</option>
@@ -257,19 +348,53 @@ function AgentModal({ isOpen, onClose, agent, apiKeys }: AgentModalProps) {
 
           {/* Model Name */}
           <div>
-            <label className="block text-sm font-medium text-gray-700">Model Name</label>
-            <input
-              type="text"
+            <LabelWithHelp label="Model Name" helpText="The specific AI model to use. Larger models are more capable but cost more. Smaller models are faster and cheaper. Choose based on the complexity of the agent's tasks." />
+            <select
               value={form.modelName}
               onChange={(e) => setForm((f) => ({ ...f, modelName: e.target.value }))}
-              placeholder="e.g., gpt-4o, claude-3-5-sonnet"
-              className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-            />
+              className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            >
+              {MODEL_OPTIONS[form.modelProvider]?.map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
           </div>
+
+          {/* Personality / Soul Template (create only) */}
+          {!isEditing && (
+            <div>
+              <LabelWithHelp label="Personality" helpText="A personality template that shapes how the agent communicates — its tone, style, and attitude. This is layered on top of the system prompt." />
+              <div className="relative mt-1">
+                <select
+                  value={form.soulTemplateId ?? ""}
+                  onChange={(e) =>
+                    setForm((f) => ({
+                      ...f,
+                      soulTemplateId: e.target.value ? Number(e.target.value) : null,
+                    }))
+                  }
+                  className="w-full appearance-none rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                >
+                  <option value="">None (custom personality)</option>
+                  {soulTemplates?.map((s: NonNullable<typeof soulTemplates>[number]) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-gray-400" />
+              </div>
+              {form.soulTemplateId && (
+                <p className="mt-1 text-xs text-gray-500">
+                  {soulTemplates?.find((s: NonNullable<typeof soulTemplates>[number]) => s.id === form.soulTemplateId)?.description}
+                </p>
+              )}
+            </div>
+          )}
 
           {/* API Key */}
           <div>
-            <label className="block text-sm font-medium text-gray-700">Linked API Key</label>
+            <LabelWithHelp label="Linked API Key" helpText="The API key this agent uses to call the AI model. Add keys in the API Keys page. Each agent can use a different key, allowing you to track costs per agent." />
             <div className="relative mt-1">
               <select
                 value={form.apiKeyId ?? ""}
@@ -294,10 +419,7 @@ function AgentModal({ isOpen, onClose, agent, apiKeys }: AgentModalProps) {
 
           {/* Temperature */}
           <div>
-            <label className="flex items-center gap-2 text-sm font-medium text-gray-700">
-              <Thermometer className="h-4 w-4" />
-              Temperature: {(form.temperature / 100).toFixed(2)}
-            </label>
+            <LabelWithHelp label={`Temperature: ${(form.temperature / 100).toFixed(2)}`} helpText="Controls creativity vs predictability. Low (0.0-0.3) = precise, consistent, factual. High (0.7-2.0) = creative, diverse, surprising. Use low for data tasks, high for brainstorming." />
             <input
               type="range"
               min={0}
@@ -314,10 +436,7 @@ function AgentModal({ isOpen, onClose, agent, apiKeys }: AgentModalProps) {
 
           {/* Max Tokens */}
           <div>
-            <label className="flex items-center gap-2 text-sm font-medium text-gray-700">
-              <Hash className="h-4 w-4" />
-              Max Tokens
-            </label>
+            <LabelWithHelp label="Max Tokens" helpText="The maximum length of the agent's response. One token is roughly 0.75 words. Higher limits allow longer outputs but cost more. 2048 is a good default for most tasks." />
             <input
               type="number"
               min={256}
@@ -418,6 +537,8 @@ export default function Agents() {
     id: number;
     name: string;
   } | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [roleFilter, setRoleFilter] = useState<string>("");
 
   const deleteMutation = trpc.agent.delete.useMutation({
     onSuccess: () => {
@@ -457,6 +578,46 @@ export default function Agents() {
         </button>
       </div>
 
+      {/* Search & Filter Bar */}
+      {!isLoading && agents && agents.length > 0 && (
+        <div className="mb-4 flex flex-wrap items-center gap-3">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+            <input
+              type="text"
+              placeholder="Search agents..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-56 rounded-lg border border-gray-200 bg-white py-2 pl-9 pr-3 text-sm text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            />
+          </div>
+          <div className="flex items-center gap-1.5">
+            <SlidersHorizontal className="h-3.5 w-3.5 text-gray-400" />
+            {["orchestrator", "manager", "worker"].map((role) => (
+              <button
+                key={role}
+                onClick={() => setRoleFilter(roleFilter === role ? "" : role)}
+                className={`rounded-full px-2.5 py-1 text-[11px] font-medium capitalize transition-colors ${
+                  roleFilter === role
+                    ? hierarchyColor(role).replace("border", "ring-1 ring")
+                    : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                }`}
+              >
+                {role}
+              </button>
+            ))}
+          </div>
+          {(searchQuery || roleFilter) && (
+            <button
+              onClick={() => { setSearchQuery(""); setRoleFilter(""); }}
+              className="text-xs text-gray-500 hover:text-gray-700"
+            >
+              Clear filters
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Content */}
       {isLoading ? (
         <div className="flex h-64 items-center justify-center">
@@ -484,7 +645,15 @@ export default function Agents() {
         </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {agents.map((agent) => (
+          {agents
+            ?.filter((agent) => {
+              const matchesSearch = !searchQuery ||
+                agent.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                (agent.description ?? "").toLowerCase().includes(searchQuery.toLowerCase());
+              const matchesRole = !roleFilter || (agent.hierarchyRole ?? "worker") === roleFilter;
+              return matchesSearch && matchesRole;
+            })
+            .map((agent: NonNullable<typeof agents>[number]) => (
             <div
               key={agent.id}
               className="flex flex-col rounded-xl border border-gray-200 bg-white p-5 shadow-sm transition-all hover:shadow-md"
@@ -557,6 +726,23 @@ export default function Agents() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {agents && agents.length > 0 && agents.filter((a) => {
+        const matchesSearch = !searchQuery || a.name.toLowerCase().includes(searchQuery.toLowerCase()) || (a.description ?? "").toLowerCase().includes(searchQuery.toLowerCase());
+        const matchesRole = !roleFilter || (a.hierarchyRole ?? "worker") === roleFilter;
+        return matchesSearch && matchesRole;
+      }).length === 0 && (
+        <div className="flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-gray-200 bg-white py-16">
+          <Search className="h-8 w-8 text-gray-300 mb-2" />
+          <p className="text-sm text-gray-500">No agents match your filters</p>
+          <button
+            onClick={() => { setSearchQuery(""); setRoleFilter(""); }}
+            className="mt-3 text-sm text-blue-600 hover:underline"
+          >
+            Clear filters
+          </button>
         </div>
       )}
 

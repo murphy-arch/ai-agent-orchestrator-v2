@@ -5,6 +5,7 @@ import { Bot, Loader2 } from "lucide-react";
 
 export default function Login() {
   const navigate = useNavigate();
+  const utils = trpc.useUtils();
   const [mode, setMode] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -13,18 +14,29 @@ export default function Login() {
 
   const loginMutation = trpc.auth.login.useMutation({
     onSuccess: (data) => {
+      console.log("[Login] success, token:", data.token?.slice(0, 20) + "...");
       localStorage.setItem("token", data.token);
+      utils.auth.me.setData(undefined, data.user);
+      console.log("[Login] cache updated, navigating to dashboard");
       navigate("/dashboard", { replace: true });
     },
-    onError: (err) => setError(err.message),
+    onError: (err) => {
+      console.error("[Login] error:", err.message);
+      setError(err.message);
+    },
   });
 
   const registerMutation = trpc.auth.register.useMutation({
     onSuccess: (data) => {
+      console.log("[Register] success, token:", data.token?.slice(0, 20) + "...");
       localStorage.setItem("token", data.token);
+      utils.auth.me.setData(undefined, data.user);
       navigate("/dashboard", { replace: true });
     },
-    onError: (err) => setError(err.message),
+    onError: (err) => {
+      console.error("[Register] error:", err.message);
+      setError(err.message);
+    },
   });
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -92,11 +104,19 @@ export default function Login() {
           </button>
         </form>
 
-        <div className="text-center text-sm">
+        <div className="text-center text-sm space-y-2">
           {mode === "login" ? (
-            <button onClick={() => setMode("register")} className="text-primary hover:underline">
-              Need an account? Register
-            </button>
+            <>
+              <button onClick={() => setMode("register")} className="text-primary hover:underline block w-full">
+                Need an account? Register
+              </button>
+              <button
+                onClick={() => alert("Password reset is not yet implemented. Contact your administrator.")}
+                className="text-xs text-gray-500 hover:text-gray-700 hover:underline"
+              >
+                Forgot password?
+              </button>
+            </>
           ) : (
             <button onClick={() => setMode("login")} className="text-primary hover:underline">
               Already have an account? Sign in

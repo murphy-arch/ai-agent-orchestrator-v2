@@ -13,7 +13,9 @@ export function createTrpcClient() {
         transformer: superjson,
         headers() {
           const token = localStorage.getItem("token");
-          return token ? { Authorization: `Bearer ${token}` } : {};
+          const headers = token ? { Authorization: `Bearer ${token}` } : {};
+          console.log("[tRPC headers] token present:", !!token, "headers:", headers);
+          return headers;
         },
       }),
     ],

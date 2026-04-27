@@ -1,75 +1,69 @@
 import { memo } from "react";
-import { Handle, Position } from "reactflow";
+import { Position, Handle } from "reactflow";
 import { GitBranch } from "lucide-react";
 
-interface ConditionNodeData {
-  label?: string;
-  condition?: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  [key: string]: any;
-}
-
-const ConditionNode = memo(({ data, selected }: { data: ConditionNodeData; selected?: boolean }) => {
+const ConditionNode = memo(({ data, selected }: { data: { label: string; condition?: string }; selected?: boolean }) => {
   return (
     <div
-      className="rounded-xl px-4 py-3 min-w-[180px] transition-all duration-200"
+      className="flex items-center justify-center transition-all duration-200"
       style={{
-        background: "rgba(251,191,36,0.08)",
-        border: selected
-          ? "2px solid #FBBF24"
-          : "1px solid rgba(251,191,36,0.2)",
-        boxShadow: selected
-          ? "0 0 20px rgba(251,191,36,0.15)"
-          : "0 2px 8px rgba(0,0,0,0.3)",
+        width: 140,
+        height: 80,
+        transform: "rotate(45deg)",
+        background: selected ? "rgba(251,191,36,0.15)" : "rgba(251,191,36,0.08)",
+        border: selected ? "2px solid #FBBF24" : "1px solid rgba(251,191,36,0.3)",
+        boxShadow: selected ? "0 0 20px rgba(251,191,36,0.2)" : "0 2px 8px rgba(0,0,0,0.08)",
+        borderRadius: 8,
       }}
     >
       <Handle
         type="target"
         position={Position.Left}
-        style={{ background: "#FBBF24", width: 8, height: 8, border: "2px solid #141416" }}
+        style={{
+          background: "#FBBF24",
+          width: 8,
+          height: 8,
+          border: "2px solid #fff",
+          transform: "rotate(-45deg)",
+        }}
       />
-
-      <div className="flex items-center gap-2 mb-1">
-        <GitBranch size={14} style={{ color: "#FBBF24" }} />
-        <span
-          className="status-badge"
-          style={{
-            background: "rgba(251,191,36,0.15)",
-            color: "#FBBF24",
-            fontSize: "8px",
-          }}
-        >
-          condition
-        </span>
-      </div>
-
       <div
-        className="font-medium truncate"
-        style={{ fontSize: "13px", color: "#fff", maxWidth: 160 }}
+        className="flex flex-col items-center gap-1"
+        style={{ transform: "rotate(-45deg)", width: 100 }}
       >
-        {data.label || "Condition"}
+        <GitBranch size={14} style={{ color: "#FBBF24" }} />
+        <span className="text-[11px] font-medium text-gray-800 text-center leading-tight truncate w-full">
+          {data.label || "Condition"}
+        </span>
+        {data.condition && (
+          <span className="text-[9px] text-gray-400 text-center truncate w-full">
+            {data.condition}
+          </span>
+        )}
       </div>
-
-      {data.condition && (
-        <div
-          className="font-mono-ui truncate"
-          style={{ fontSize: "9px", color: "rgba(255,255,255,0.35)", marginTop: "2px" }}
-        >
-          {data.condition}
-        </div>
-      )}
-
       <Handle
         type="source"
         position={Position.Right}
+        style={{
+          background: "#FBBF24",
+          width: 8,
+          height: 8,
+          border: "2px solid #fff",
+          transform: "rotate(-45deg)",
+        }}
         id="true"
-        style={{ background: "#4ADE80", width: 8, height: 8, border: "2px solid #141416", top: "30%" }}
       />
       <Handle
         type="source"
-        position={Position.Right}
+        position={Position.Bottom}
+        style={{
+          background: "#F87171",
+          width: 8,
+          height: 8,
+          border: "2px solid #fff",
+          transform: "rotate(-45deg)",
+        }}
         id="false"
-        style={{ background: "#F87171", width: 8, height: 8, border: "2px solid #141416", top: "70%" }}
       />
     </div>
   );

@@ -11,9 +11,11 @@ import {
   KeyRound,
   CheckCircle2,
   ChevronLeft,
+  Globe,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { trpc } from "@/trpc";
+import { COMMON_TIMEZONES } from "@/lib/schedule-templates";
 
 type Theme = "light" | "dark" | "system";
 
@@ -55,12 +57,15 @@ export default function UserSettings() {
   const { data: user, isLoading } = trpc.auth.me.useQuery();
 
   const [name, setName] = useState("");
+  const [timezone, setTimezone] = useState("UTC");
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [theme, setTheme] = useState<Theme>("light");
   const [error, setError] = useState("");
   const [profileSuccess, setProfileSuccess] = useState(false);
+  const [passwordSuccess, setPasswordSuccess] = useState(false);
+  const [timezoneSuccess, setTimezoneSuccess] = useState(false);
 
   // Load theme from localStorage
   useEffect(() => {
@@ -73,6 +78,9 @@ export default function UserSettings() {
     if (user?.name) {
       setName(user.name);
     }
+    if (user?.timezone) {
+      setTimezone(user.timezone);
+    }
   }, [user]);
 
   const updateProfile = trpc.settings.updateUserProfile.useMutation({
@@ -80,6 +88,15 @@ export default function UserSettings() {
       utils.auth.me.invalidate();
       setProfileSuccess(true);
       setTimeout(() => setProfileSuccess(false), 3000);
+    },
+    onError: (err) => setError(err.message),
+  });
+
+  const updateTimezone = trpc.settings.updateUserTimezone.useMutation({
+    onSuccess: () => {
+      utils.auth.me.invalidate();
+      setTimezoneSuccess(true);
+      setTimeout(() => setTimezoneSuccess(false), 3000);
     },
     onError: (err) => setError(err.message),
   });
@@ -92,6 +109,12 @@ export default function UserSettings() {
       return;
     }
     updateProfile.mutate({ name: name.trim() });
+  };
+
+  const handleTimezoneChange = (newTz: string) => {
+    setTimezone(newTz);
+    setError("");
+    updateTimezone.mutate({ timezone: newTz });
   };
 
   const handleThemeChange = (newTheme: Theme) => {
@@ -110,6 +133,17 @@ export default function UserSettings() {
     }
   };
 
+  const changePassword = trpc.settings.changePassword.useMutation({
+    onSuccess: () => {
+      setPasswordSuccess(true);
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+      setTimeout(() => setPasswordSuccess(false), 3000);
+    },
+    onError: (err) => setError(err.message),
+  });
+
   const handlePasswordChange = (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
@@ -121,10 +155,7 @@ export default function UserSettings() {
       setError("Password must be at least 8 characters");
       return;
     }
-    // Placeholder - no backend mutation
-    setCurrentPassword("");
-    setNewPassword("");
-    setConfirmPassword("");
+    changePassword.mutate({ currentPassword, newPassword });
   };
 
   if (isLoading) {
@@ -232,6 +263,54 @@ export default function UserSettings() {
           </div>
         </section>
 
+        {/* Timezone Section */}
+        <section className="rounded-xl border border-gray-200 bg-white shadow-sm">
+          <div className="border-b border-gray-100 px-5 py-4">
+            <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-900">
+              <Globe className="h-4 w-4 text-gray-500" />
+              Timezone
+            </h2>
+          </div>
+          <div className="space-y-4 px-5 py-4">
+            <p className="text-xs text-gray-500">
+              Your timezone is used for all schedules. Times are stored in your local timezone and converted automatically.
+            </p>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700">Select Timezone</label>
+              <select
+                value={timezone}
+                onChange={(e) => setTimezone(e.target.value)}
+                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 sm:w-80"
+              >
+                {COMMON_TIMEZONES.map((tz) => (
+                  <option key={tz.value} value={tz.value}>
+                    {tz.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {timezoneSuccess && (
+              <div className="flex items-center gap-2 rounded-lg bg-green-50 px-3 py-2 text-sm text-green-600">
+                <CheckCircle2 className="h-4 w-4 flex-shrink-0" />
+                Timezone updated successfully
+              </div>
+            )}
+
+            <div className="flex justify-end">
+              <button
+                onClick={() => handleTimezoneChange(timezone)}
+                disabled={updateTimezone.isPending || timezone === (user?.timezone ?? "UTC")}
+                className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {updateTimezone.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+                <Save className="h-4 w-4" />
+                Save Timezone
+              </button>
+            </div>
+          </div>
+        </section>
+
         {/* Password Section */}
         <section className="rounded-xl border border-gray-200 bg-white shadow-sm">
           <div className="border-b border-gray-100 px-5 py-4">
@@ -271,11 +350,20 @@ export default function UserSettings() {
                 className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
               />
             </div>
+            {passwordSuccess && (
+              <div className="flex items-center gap-2 rounded-lg bg-green-50 px-3 py-2 text-sm text-green-600">
+                <CheckCircle2 className="h-4 w-4 flex-shrink-0" />
+                Password updated successfully
+              </div>
+            )}
+
             <div className="flex justify-end">
               <button
                 type="submit"
-                className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
+                disabled={changePassword.isPending}
+                className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
+                {changePassword.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
                 <KeyRound className="h-4 w-4" />
                 Update Password
               </button>

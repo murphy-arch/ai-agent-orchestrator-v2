@@ -39,7 +39,11 @@ export const workflowRouter = router({
       const db = getDb();
       await verifyStackAccess(ctx.user.id, input.stackId);
 
-      await db.transaction(async (tx) => {
+      console.log("[workflow.save] received nodes:", input.nodes.length, "edges:", input.edges.length);
+      console.log("[workflow.save] node IDs:", input.nodes.map((n) => n.id));
+      console.log("[workflow.save] edge data:", JSON.stringify(input.edges));
+
+      const result = await db.transaction(async (tx) => {
         // Soft-delete all existing nodes and edges for this stack
         await tx
           .update(workflowNodes)
@@ -51,35 +55,47 @@ export const workflowRouter = router({
           .set({ isActive: false })
           .where(eq(workflowEdges.stackId, input.stackId));
 
-        // Insert new nodes
-        if (input.nodes.length > 0) {
-          for (const node of input.nodes) {
-            await tx.insert(workflowNodes).values({
-              stackId: input.stackId,
-              agentId: node.agentId ?? null,
-              type: node.type,
-              positionX: node.positionX,
-              positionY: node.positionY,
-              data: node.data ?? {},
-              isActive: true,
-            });
-          }
+        // Insert nodes and capture DB-generated IDs
+        const nodeIdMap = new Map<number, number>();
+        for (const node of input.nodes) {
+          const [insertResult] = await tx.insert(workflowNodes).values({
+            stackId: input.stackId,
+            agentId: node.agentId ?? null,
+            type: node.type,
+            positionX: node.positionX,
+            positionY: node.positionY,
+            data: node.data ?? {},
+            isActive: true,
+          });
+          const dbId = Number(insertResult.insertId);
+          nodeIdMap.set(node.id ?? dbId, dbId);
+          console.log(`[workflow.save] inserted node frontendId=${node.id} -> dbId=${dbId}`);
         }
 
-        // Insert new edges
-        if (input.edges.length > 0) {
-          for (const edge of input.edges) {
-            await tx.insert(workflowEdges).values({
-              stackId: input.stackId,
-              sourceId: edge.sourceId,
-              targetId: edge.targetId,
-              condition: edge.condition ?? null,
-              isActive: true,
-            });
+        // Insert edges using DB-generated node IDs
+        let edgesInserted = 0;
+        for (const edge of input.edges) {
+          const sourceId = nodeIdMap.get(edge.sourceId);
+          const targetId = nodeIdMap.get(edge.targetId);
+          if (sourceId === undefined || targetId === undefined) {
+            console.warn(`[workflow.save] skipping edge ${edge.id}: missing node mapping for sourceId=${edge.sourceId} or targetId=${edge.targetId}. Available:`, Array.from(nodeIdMap.entries()));
+            continue;
           }
+          await tx.insert(workflowEdges).values({
+            stackId: input.stackId,
+            sourceId,
+            targetId,
+            condition: edge.condition ?? null,
+            isActive: true,
+          });
+          edgesInserted++;
+          console.log(`[workflow.save] inserted edge ${edge.id}: ${sourceId} -> ${targetId}`);
         }
+
+        return { nodesInserted: input.nodes.length, edgesInserted };
       });
 
+      console.log("[workflow.save] transaction committed:", result);
       return { success: true };
     }),
 
@@ -109,6 +125,11 @@ export const workflowRouter = router({
             eq(workflowEdges.isActive, true)
           )
         );
+
+      console.log("[workflow.load] nodes:", nodes.length, "edges:", edges.length);
+      if (edges.length > 0) {
+        console.log("[workflow.load] edge rows:", JSON.stringify(edges));
+      }
 
       return { nodes, edges };
     }),

@@ -9,12 +9,24 @@ import {
   User,
 } from "lucide-react";
 import { trpc } from "@/trpc";
+import { OrchestrationTrace } from "./OrchestrationTrace";
 
 interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
   timestamp: number;
+  plan?: string;
+  workerResults?: Array<{
+    agentName: string;
+    role?: string;
+    task?: string;
+    response: string;
+    tokensUsed?: number;
+    latencyMs?: number;
+  }>;
+  totalTokens?: number;
+  totalLatencyMs?: number;
 }
 
 function generateId(): string {
@@ -40,7 +52,7 @@ export function GlobalChatWidget() {
   const [selectedStackId, setSelectedStackId] = useState<number | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const { data: stacks } = trpc.stack.list.useQuery();
@@ -69,7 +81,12 @@ export function GlobalChatWidget() {
 
   // Scroll to bottom on new messages
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    requestAnimationFrame(() => {
+      const container = messagesContainerRef.current;
+      if (container) {
+        container.scrollTop = container.scrollHeight;
+      }
+    });
   }, [messages, isOpen]);
 
   // Auto-resize textarea
@@ -106,6 +123,10 @@ export function GlobalChatWidget() {
             role: "assistant",
             content: typeof data === "string" ? data : data.response ?? "No response",
             timestamp: Date.now(),
+            plan: typeof data === "object" ? data.plan ?? undefined : undefined,
+            workerResults: typeof data === "object" ? data.workerResults ?? undefined : undefined,
+            totalTokens: typeof data === "object" ? data.tokensUsed ?? undefined : undefined,
+            totalLatencyMs: typeof data === "object" ? data.latencyMs ?? undefined : undefined,
           };
           setMessages((prev) => [...prev, assistantMessage]);
         },
@@ -171,7 +192,7 @@ export function GlobalChatWidget() {
               onChange={(e) => setSelectedStackId(Number(e.target.value))}
               className="w-full appearance-none rounded-md border border-gray-200 bg-gray-50 py-1.5 pl-3 pr-8 text-xs font-medium text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
             >
-              {stacks.map((s) => (
+              {stacks.map((s: { id: number; name: string }) => (
                 <option key={s.id} value={s.id}>
                   {s.name}
                 </option>
@@ -183,7 +204,7 @@ export function GlobalChatWidget() {
       )}
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-3">
+      <div ref={messagesContainerRef} className="flex-1 overflow-y-auto px-4 py-3">
         {messages.length === 0 && (
           <div className="flex h-full flex-col items-center justify-center text-center text-gray-400">
             <Bot className="mb-2 h-8 w-8 opacity-40" />
@@ -193,32 +214,45 @@ export function GlobalChatWidget() {
         )}
 
         {messages.map((msg) => (
-          <div
-            key={msg.id}
-            className={`mb-3 flex gap-2 ${msg.role === "user" ? "flex-row-reverse" : "flex-row"}`}
-          >
+          <div key={msg.id}>
             <div
-              className={`flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full ${
-                msg.role === "user"
-                  ? "bg-blue-100 text-blue-600"
-                  : "bg-gray-100 text-gray-600"
-              }`}
+              className={`mb-3 flex gap-2 ${msg.role === "user" ? "flex-row-reverse" : "flex-row"}`}
             >
-              {msg.role === "user" ? (
-                <User className="h-3 w-3" />
-              ) : (
-                <Bot className="h-3 w-3" />
-              )}
+              <div
+                className={`flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full ${
+                  msg.role === "user"
+                    ? "bg-blue-100 text-blue-600"
+                    : "bg-gray-100 text-gray-600"
+                }`}
+              >
+                {msg.role === "user" ? (
+                  <User className="h-3 w-3" />
+                ) : (
+                  <Bot className="h-3 w-3" />
+                )}
+              </div>
+              <div
+                className={`max-w-[80%] rounded-lg px-3 py-2 text-sm leading-relaxed ${
+                  msg.role === "user"
+                    ? "bg-blue-600 text-white"
+                    : "border border-gray-100 bg-gray-50 text-gray-800"
+                }`}
+              >
+                {msg.content}
+              </div>
             </div>
-            <div
-              className={`max-w-[80%] rounded-lg px-3 py-2 text-sm leading-relaxed ${
-                msg.role === "user"
-                  ? "bg-blue-600 text-white"
-                  : "border border-gray-100 bg-gray-50 text-gray-800"
-              }`}
-            >
-              {msg.content}
-            </div>
+            {msg.role === "assistant" && msg.workerResults && msg.workerResults.length > 0 && (
+              <div className="mb-3 ml-8 max-w-[90%]">
+                <OrchestrationTrace
+                  plan={msg.plan}
+                  workerResults={msg.workerResults}
+                  finalResponse={msg.content}
+                  totalTokens={msg.totalTokens}
+                  totalLatencyMs={msg.totalLatencyMs}
+                  variant="compact"
+                />
+              </div>
+            )}
           </div>
         ))}
 
@@ -236,7 +270,6 @@ export function GlobalChatWidget() {
           </div>
         )}
 
-        <div ref={messagesEndRef} />
       </div>
 
       {/* Input */}

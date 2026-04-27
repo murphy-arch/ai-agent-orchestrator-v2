@@ -222,4 +222,59 @@ export const settingsRouter = router({
 
       return { success: true };
     }),
+
+  // ─── Get user timezone ───
+  getUserTimezone: authedQuery.query(async ({ ctx }) => {
+    const db = getDb();
+    const [user] = await db
+      .select({ timezone: users.timezone })
+      .from(users)
+      .where(eq(users.id, ctx.user.id))
+      .limit(1);
+    return { timezone: user?.timezone || "UTC" };
+  }),
+
+  // ─── Update user timezone ───
+  updateUserTimezone: authedQuery
+    .input(z.object({ timezone: z.string().min(1) }))
+    .mutation(async ({ ctx, input }) => {
+      const db = getDb();
+      await db
+        .update(users)
+        .set({ timezone: input.timezone })
+        .where(eq(users.id, ctx.user.id));
+      return { success: true };
+    }),
+
+  // ─── Change user password ───
+  changePassword: authedQuery
+    .input(
+      z.object({
+        currentPassword: z.string().min(1),
+        newPassword: z.string().min(8),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const db = getDb();
+
+      const [user] = await db
+        .select()
+        .from(users)
+        .where(eq(users.id, ctx.user.id))
+        .limit(1);
+
+      if (!user) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "User not found" });
+      }
+
+      const valid = await verifyPassword(input.currentPassword, user.passwordHash);
+      if (!valid) {
+        throw new TRPCError({ code: "UNAUTHORIZED", message: "Current password is incorrect" });
+      }
+
+      const newHash = await hashPassword(input.newPassword);
+      await db.update(users).set({ passwordHash: newHash }).where(eq(users.id, ctx.user.id));
+
+      return { success: true };
+    }),
 });

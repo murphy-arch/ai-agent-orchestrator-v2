@@ -2,9 +2,9 @@ import { TRPCError, initTRPC } from "@trpc/server";
 import { Context } from "hono";
 import { jwtVerify } from "jose";
 import superjson from "superjson";
-import { eq, and } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { getDb } from "@db/connection";
-import { users, stackMembers } from "@db/schema";
+import { users } from "@db/schema";
 
 // ─── JWT Secret ───
 const JWT_SECRET = new TextEncoder().encode(
@@ -13,16 +13,15 @@ const JWT_SECRET = new TextEncoder().encode(
 
 // ─── Context Builder ───
 export async function createContext(c: Context) {
-  const token =
-    c.req.header("authorization")?.replace("Bearer ", "") ||
-    c.req.header("x-jwt") ||
-    "";
+  const rawAuth = c.req.header("authorization") || "";
+  const token = rawAuth.replace("Bearer ", "") || c.req.header("x-jwt") || "";
 
-  let user: { id: number; email: string; name: string | null; role: string } | null = null;
+  let user: { id: number; email: string; name: string | null; role: string; timezone: string } | null = null;
 
   if (token) {
     try {
       const { payload } = await jwtVerify(token, JWT_SECRET, { clockTolerance: 60 });
+      console.log("[auth] token verified, sub:", payload.sub);
       if (payload.sub) {
         const db = getDb();
         const [dbUser] = await db
@@ -35,12 +34,18 @@ export async function createContext(c: Context) {
             email: dbUser.email,
             name: dbUser.name,
             role: dbUser.role || "user",
+            timezone: dbUser.timezone || "UTC",
           };
+          console.log("[auth] user found:", dbUser.email);
+        } else {
+          console.log("[auth] user NOT found for sub:", payload.sub);
         }
       }
-    } catch {
-      // Invalid token — user remains null
+    } catch (err) {
+      console.log("[auth] token verification failed:", (err as Error).message);
     }
+  } else {
+    console.log("[auth] no token provided");
   }
 
   return { user, c };

@@ -1,5 +1,5 @@
-import { Link, useLocation, useNavigate } from "react-router-dom";
-import { useStack } from "./StackLayout";
+import { Link, useLocation } from "react-router-dom";
+import { useStack } from "./StackContext";
 import {
   Bot,
   Workflow,
@@ -9,9 +9,18 @@ import {
   UserCircle,
   ChevronLeft,
   Terminal,
-  LogOut,
+  Brain,
+  CalendarClock,
+  LayoutTemplate,
+  KeyRound,
+  Users,
+  Database,
+  Home,
+  Keyboard,
 } from "lucide-react";
 import type { ReactNode } from "react";
+import HelpTooltip from "@/components/HelpTooltip";
+import KeyboardShortcutsModal, { useKeyboardShortcutsModal } from "@/components/KeyboardShortcutsModal";
 
 interface Stack {
   id: number;
@@ -29,14 +38,22 @@ export default function AppLayout({
 }) {
   const { stackId } = useStack();
   const location = useLocation();
-  const navigate = useNavigate();
+  const { isOpen: shortcutsOpen, setIsOpen: setShortcutsOpen } = useKeyboardShortcutsModal();
 
   const navItems = [
-    { to: `/stacks/${stackId}/architecture`, icon: Workflow, label: "Architecture" },
-    { to: `/stacks/${stackId}/agents`, icon: Bot, label: "Agents" },
-    { to: `/stacks/${stackId}/console`, icon: Terminal, label: "Console" },
-    { to: `/stacks/${stackId}/analytics`, icon: BarChart3, label: "Analytics" },
-    { to: `/stacks/${stackId}/settings`, icon: Settings, label: "Settings" },
+    { to: `/stacks/${stackId}/architecture`, icon: Workflow, label: "Architecture", help: "Design visual workflows by connecting nodes. Agents, decisions, delays, loops, and parallel branches." },
+    { to: `/stacks/${stackId}/agents`, icon: Bot, label: "Agents", help: "Create and configure AI agents. Set their role, personality, model, and API keys." },
+    { to: `/stacks/${stackId}/memory`, icon: Brain, label: "Memory", help: "Store and retrieve context that agents can access during conversations. Like a long-term memory bank." },
+    { to: `/stacks/${stackId}/knowledge`, icon: BookOpen, label: "Knowledge", help: "Upload documents for RAG (Retrieval-Augmented Generation). Agents can search and cite your documents." },
+    { to: `/stacks/${stackId}/schedules`, icon: CalendarClock, label: "Schedules", help: "Set up cron schedules to automatically trigger workflows at specific times or intervals." },
+    { to: `/stacks/${stackId}/templates`, icon: LayoutTemplate, label: "Templates", help: "Reusable workflow templates. Save a workflow design and instantiate it across different stacks." },
+    { to: `/stacks/${stackId}/blueprints`, icon: LayoutTemplate, label: "Blueprints", help: "Pre-built agent team configurations with workflows. Instantly deploy complete stacks for common use cases." },
+    { to: `/stacks/${stackId}/teams`, icon: Users, label: "Teams", help: "Group agents into multi-agent teams. An Orchestrator plans tasks and delegates to Worker agents." },
+    { to: `/stacks/${stackId}/database`, icon: Database, label: "Database", help: "A file storage system for all work completed by agents. Browse, search, preview, and download outputs." },
+    { to: `/stacks/${stackId}/api-keys`, icon: KeyRound, label: "API Keys", help: "Manage API keys for OpenAI, Anthropic, and Google. Each agent links to a key for billing separation." },
+    { to: `/stacks/${stackId}/console`, icon: Terminal, label: "Console", help: "A live chat interface to test agents and teams one-on-one before deploying them to workflows." },
+    { to: `/stacks/${stackId}/analytics`, icon: BarChart3, label: "Analytics", help: "View execution history, token usage, latency, and cost analytics for all agent runs." },
+    { to: `/stacks/${stackId}/settings`, icon: Settings, label: "Settings", help: "Stack-level configuration including public API keys and webhook endpoints." },
   ];
 
   const globalItems = [
@@ -89,7 +106,8 @@ export default function AppLayout({
               }`}
             >
               <item.icon className="w-4 h-4" />
-              {item.label}
+              <span className="flex-1">{item.label}</span>
+              <HelpTooltip text={item.help} width="w-56" />
             </Link>
           ))}
 
@@ -115,8 +133,33 @@ export default function AppLayout({
 
       {/* Main content */}
       <main className="flex-1 overflow-auto">
+        {/* Breadcrumb */}
+        <div className="px-6 pt-4 pb-0 flex items-center justify-between">
+          <nav className="flex items-center gap-1.5 text-xs text-gray-500">
+            <Link to="/dashboard" className="flex items-center gap-1 hover:text-gray-800 transition-colors">
+              <Home className="h-3 w-3" /> Dashboard
+            </Link>
+            <span className="text-gray-300">/</span>
+            <Link to={`/stacks/${stackId}/architecture`} className="hover:text-gray-800 transition-colors truncate max-w-[120px]">
+              {stack.name}
+            </Link>
+            <span className="text-gray-300">/</span>
+            <span className="text-gray-800 font-medium capitalize">
+              {location.pathname.split("/").pop()?.replace(/-/g, " ") ?? ""}
+            </span>
+          </nav>
+          <button
+            onClick={() => setShortcutsOpen(true)}
+            className="flex items-center gap-1 text-[10px] text-gray-400 hover:text-gray-600 transition-colors"
+            title="Keyboard shortcuts"
+          >
+            <Keyboard className="h-3 w-3" />
+            Press ? for shortcuts
+          </button>
+        </div>
         <div className="p-6">{children}</div>
       </main>
+      <KeyboardShortcutsModal isOpen={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
     </div>
   );
 }
