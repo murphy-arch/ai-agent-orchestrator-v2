@@ -30,7 +30,7 @@ jobs:
 
       - name: Create deploy tarball
         run: |
-          tar --exclude="node_modules" --exclude="dist" --exclude=".git" -czf deploy.tar.gz .
+          tar --exclude="node_modules" --exclude=".git" --exclude="logs" -czf deploy.tar.gz .
 
       - name: Connect to Tailscale
         uses: tailscale/github-action@v3
@@ -47,39 +47,44 @@ jobs:
       - name: Deploy to droplet
         run: |
           echo "Uploading tarball..."
-          scp -o StrictHostKeyChecking=no deploy.tar.gz root@olympus-ollama-cd.tail218dac.ts.net:/tmp/ai-orchestrator-deploy.tar.gz
+          scp -o StrictHostKeyChecking=no deploy.tar.gz root@orchestrator-builder-os:/tmp/agent-stack-deploy.tar.gz
 
           echo "Running remote deploy..."
-          ssh -o StrictHostKeyChecking=no root@olympus-ollama-cd.tail218dac.ts.net << 'REMOTE_EOF'
+          ssh -o StrictHostKeyChecking=no root@orchestrator-builder-os << 'REMOTE_EOF'
             set -e
-            APP_DIR="/opt/ai-orchestrator"
-            TAR_FILE="/tmp/ai-orchestrator-deploy.tar.gz"
+            APP_DIR="/var/www/agent-stack"
+            TAR_FILE="/tmp/agent-stack-deploy.tar.gz"
 
-            echo "[1/4] Backing up .env..."
+            echo "[1/5] Stopping service..."
+            systemctl stop agent-stack
+
+            echo "[2/5] Backing up .env..."
             if [ -f "$APP_DIR/.env" ]; then
               cp "$APP_DIR/.env" /tmp/.env.backup
             fi
 
-            echo "[2/4] Extracting new code..."
-            tar -xzf "$TAR_FILE" -C /tmp/
-            cp -a /tmp/. "$APP_DIR/"
-            rm -rf /tmp/package.json /tmp/src /tmp/api /tmp/db /tmp/public /tmp/scripts /tmp/contracts /tmp/index.html /tmp/vite.config.ts /tmp/tsconfig.json /tmp/tsconfig.app.json /tmp/tsconfig.node.json /tmp/postcss.config.js /tmp/tailwind.config.js /tmp/eslint.config.js /tmp/drizzle.config.ts /tmp/.github /tmp/electron /tmp/build /tmp/CHANGELOG.md /tmp/CONTRIBUTING.md /tmp/LICENSE /tmp/README.md /tmp/MILESTONES.md /tmp/work-items.md /tmp/plan.md 2>/dev/null || true
+            echo "[3/5] Extracting new code..."
+            cd "$APP_DIR"
+            tar -xzf "$TAR_FILE" --overwrite
+            rm -f "$TAR_FILE"
 
-            echo "[3/4] Restoring .env..."
+            echo "[4/5] Restoring .env and installing deps..."
             if [ -f /tmp/.env.backup ]; then
               cp /tmp/.env.backup "$APP_DIR/.env"
               rm /tmp/.env.backup
             fi
+            npm install --production
+            npx drizzle-kit migrate || true
+            chown -R www-data:www-data "$APP_DIR"
 
-            echo "[4/4] Rebuilding and restarting..."
-            cd "$APP_DIR"
-            docker compose up -d --build app
-            sleep 10
-            docker compose ps
+            echo "[5/5] Starting service..."
+            systemctl start agent-stack
+            sleep 5
+            systemctl status agent-stack --no-pager || true
 
             echo ""
             echo "=== App logs (last 5 lines) ==="
-            docker compose logs --tail 5 app || true
+            tail -n 5 /var/www/agent-stack/logs/app.log || true
 
             echo ""
             echo "Deployment complete!"
@@ -90,14 +95,14 @@ jobs:
       - name: Health check
         run: |
           sleep 5
-          curl -sf https://olympus-ollama-cd.tail218dac.ts.net/api/health || exit 1
+          curl -sf https://orchestrator.website/api/health || exit 1
           echo "Health check passed"
 
       - name: Notify
         if: always()
         run: |
           if [ "${{ job.status }}" == "success" ]; then
-            echo "✅ Deployed successfully to https://olympus-ollama-cd.tail218dac.ts.net"
+            echo "✅ Deployed successfully to https://orchestrator.website"
           else
             echo "❌ Deploy failed"
           fi

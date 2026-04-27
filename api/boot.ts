@@ -4,15 +4,25 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { serve } from "@hono/node-server";
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
 import { readFileSync } from "fs";
+import { execSync } from "child_process";
 import "dotenv/config";
 import { appRouter } from "./_app";
 import { createContext } from "./middleware";
 import { migrateToMultiStack } from "./migrations/001-default-stack";
 import { addClient, removeClient, broadcastLog } from "./lib/log-broadcaster";
 import { getDb } from "@db/connection";
-import { eq } from "drizzle-orm";
-import { inputSources } from "@db/schema";
+import { eq, and } from "drizzle-orm";
+import { inputSources, workflowNodes, aiAgents, executionRuns } from "@db/schema";
 import { dispatchOutput } from "./lib/dispatch-output";
+import { runWorkflow } from "./lib/workflow-engine";
+import { startScheduler, stopScheduler } from "./lib/scheduler";
+import { handleDocumentUpload } from "./document-router";
+import { seedTemplates } from "./lib/seed-templates";
+import { seedSoulTemplates } from "./lib/seed-souls";
+import { seedAgentFunctions } from "./lib/seed-agent-functions";
+import { seedSkills } from "./lib/seed-skills";
+import { seedBlueprints } from "./lib/seed-blueprints";
+import { publicApiMiddleware } from "./lib/public-api-middleware";
 
 function createApp() {
   const app = new Hono();
@@ -21,7 +31,7 @@ function createApp() {
   app.use(
     "/trpc/*",
     cors({
-      origin: ["http://localhost:5173", "http://localhost:3000", "https://olympus-ollama-cd.tail218dac.ts.net"],
+      origin: ["http://localhost:5173", "http://localhost:3000", "https://orchestrator.website", "https://www.orchestrator.website"],
       credentials: true,
       allowHeaders: ["Content-Type", "Authorization", "x-jwt"],
     })
@@ -31,10 +41,47 @@ function createApp() {
   app.use(
     "/api/*",
     cors({
-      origin: ["http://localhost:5173", "http://localhost:3000", "https://olympus-ollama-cd.tail218dac.ts.net"],
+      origin: ["http://localhost:5173", "http://localhost:3000", "https://orchestrator.website", "https://www.orchestrator.website"],
       credentials: true,
     })
   );
+
+  // â”€â”€â”€ Rate Limiting â”€â”€â”€
+  const rateLimitStore = new Map<string, { count: number; resetTime: number }>();
+  const RATE_LIMIT = 120; // requests per window
+  const RATE_WINDOW = 60_000; // 1 minute
+
+  app.use("/trpc/*", async (c, next) => {
+    const ip = c.req.header("x-forwarded-for") || c.req.header("x-real-ip") || "unknown";
+    const now = Date.now();
+    const entry = rateLimitStore.get(ip);
+
+    if (!entry || now > entry.resetTime) {
+      rateLimitStore.set(ip, { count: 1, resetTime: now + RATE_WINDOW });
+    } else {
+      entry.count++;
+      if (entry.count > RATE_LIMIT) {
+        return c.json({ error: "Rate limit exceeded. Try again later." }, 429);
+      }
+    }
+    await next();
+  });
+
+  app.use("/api/*", async (c, next) => {
+    const ip = c.req.header("x-forwarded-for") || c.req.header("x-real-ip") || "unknown";
+    const now = Date.now();
+    const entry = rateLimitStore.get(ip);
+
+    if (!entry || now > entry.resetTime) {
+      rateLimitStore.set(ip, { count: 1, resetTime: now + RATE_WINDOW });
+    } else {
+      entry.count++;
+      if (entry.count > RATE_LIMIT) {
+        return c.json({ error: "Rate limit exceeded. Try again later." }, 429);
+      }
+    }
+    await next();
+  });
 
   // tRPC handler
   app.use("/trpc/*", async (c) => {
@@ -66,6 +113,11 @@ function createApp() {
     } catch {
       return c.json({ status: "degraded", db: "disconnected", version: "2.0.0", ts: Date.now() }, 503);
     }
+  });
+
+  // ─── Document Upload (multipart) ───
+  app.post("/api/upload/:stackId", async (c) => {
+    return handleDocumentUpload(c);
   });
 
   // ─── SSE Live Log Stream ───
@@ -121,6 +173,84 @@ function createApp() {
     return c.json({ success: true, stackId: source.stackId, message: "Webhook received" });
   });
 
+  // ─── Telegram Webhook Receiver ───
+  app.post("/api/webhook/telegram/:stackId", async (c) => {
+    const stackId = Number(c.req.param("stackId"));
+    const payload = await c.req.json().catch(() => ({}));
+
+    const message = payload.message || payload.edited_message || {};
+    const chatId = message.chat?.id;
+    const text = message.text || "";
+
+    console.log(`[telegram webhook] stackId=${stackId} chatId=${chatId} text="${text}"`);
+
+    if (!text) {
+      return c.json({ success: false, error: "No text in message" }, 400);
+    }
+
+    try {
+      // Look up the bot token from the workflow's input nodes
+      const db = getDb();
+      const dbNodes = await db
+        .select()
+        .from(workflowNodes)
+        .where(and(eq(workflowNodes.stackId, stackId), eq(workflowNodes.isActive, true)));
+
+      const inputNode = dbNodes.find(
+        (n) => n.type === "input" && (n.data as Record<string, unknown>)?.inputType === "telegram"
+      );
+      const botToken = inputNode
+        ? ((inputNode.data as Record<string, unknown>)?.botToken as string | undefined)
+        : undefined;
+
+      console.log(`[telegram webhook] botToken found: ${botToken ? "yes" : "no"}`);
+
+      // Execute the workflow for this stack, passing Telegram context as session variables
+      // so downstream output nodes can reference the original chat
+      const result = await runWorkflow({
+        stackId,
+        message: text,
+        sessionVariables: {
+          __telegramChatId: chatId ? String(chatId) : "",
+          __telegramBotToken: botToken || "",
+        },
+      });
+      console.log("[telegram webhook] workflow result:", result);
+
+      // Collect final output responses (exclude internal dispatch logs)
+      const responses = result.outputs
+        .filter((o) => o.response && !o.response.startsWith("[") && !o.response.startsWith("Error"))
+        .map((o) => o.response)
+        .join("\n\n");
+
+      // Send response back to Telegram if we have a chatId and bot token
+      if (chatId && botToken) {
+        try {
+          const tgRes = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: responses || "Workflow executed (no output)",
+            }),
+          });
+          const tgData = await tgRes.json().catch(() => ({})) as Record<string, unknown>;
+          console.log("[telegram webhook] sendMessage result:", tgData.ok ? "ok" : JSON.stringify(tgData));
+        } catch (err) {
+          console.error("[telegram webhook] failed to send response:", err);
+        }
+      } else {
+        console.warn("[telegram webhook] cannot reply: missing chatId or botToken");
+      }
+
+      return c.json({ success: true, executed: result.executed, outputs: result.outputs.length });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[telegram webhook] execution error:", msg);
+      return c.json({ success: false, error: msg }, 500);
+    }
+  });
+
   // ─── Workflow Trigger Webhook ───
   app.post("/api/webhook/trigger/:workflowId", async (c) => {
     const workflowId = c.req.param("workflowId");
@@ -134,6 +264,131 @@ function createApp() {
     });
 
     return c.json({ success: true, workflowId, message: "Workflow trigger received" });
+  });
+
+  // ─── Public API v1: Run Workflow ───
+  app.post("/api/v1/:stackId/run", publicApiMiddleware("run"), async (c) => {
+    const stackId = Number(c.req.param("stackId"));
+    const body = await c.req.json().catch(() => ({}));
+    const message = body.message || "";
+    const variables = body.variables || {};
+
+    if (!message) {
+      return c.json({ error: "Missing 'message' field" }, 400);
+    }
+
+    try {
+      const result = await runWorkflow({
+        stackId,
+        message,
+        sessionVariables: variables,
+        trigger: "api",
+      });
+
+      return c.json({
+        success: result.success,
+        runId: result.runId,
+        executed: result.executed,
+        outputs: result.outputs,
+        sessionVariables: result.sessionVariables,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return c.json({ error: msg }, 500);
+    }
+  });
+
+  // ─── Public API v1: List Agents ───
+  app.get("/api/v1/:stackId/agents", publicApiMiddleware("agents"), async (c) => {
+    const stackId = Number(c.req.param("stackId"));
+    const db = getDb();
+
+    const agents = await db
+      .select({
+        id: aiAgents.id,
+        slug: aiAgents.slug,
+        name: aiAgents.name,
+        agentType: aiAgents.agentType,
+        description: aiAgents.description,
+        modelProvider: aiAgents.modelProvider,
+        modelName: aiAgents.modelName,
+        isEnabled: aiAgents.isEnabled,
+      })
+      .from(aiAgents)
+      .where(eq(aiAgents.stackId, stackId))
+      .orderBy(aiAgents.name);
+
+    return c.json({ agents });
+  });
+
+  // ─── Public API v1: Chat with Agent ───
+  app.post("/api/v1/:stackId/agents/:agentId/chat", publicApiMiddleware("chat"), async (c) => {
+    const stackId = Number(c.req.param("stackId"));
+    const agentId = Number(c.req.param("agentId"));
+    const body = await c.req.json().catch(() => ({}));
+    const message = body.message || "";
+
+    if (!message) {
+      return c.json({ error: "Missing 'message' field" }, 400);
+    }
+
+    try {
+      const { resolveAgentCredential } = await import("./lib/workflow-engine");
+      const { callLlm } = await import("./lib/llm-provider");
+
+      const config = await resolveAgentCredential(agentId);
+
+      const result = await callLlm({
+        provider: config.provider,
+        apiKey: config.apiKey,
+        model: config.model,
+        systemPrompt: config.systemPrompt,
+        messages: [{ role: "user", content: message }],
+        temperature: (config.temperature ?? 70) / 100,
+        maxTokens: config.maxTokens,
+      });
+
+      return c.json({
+        response: result.content,
+        tokensUsed: result.tokensUsed,
+        latencyMs: result.latencyMs,
+        agentName: config.agent.name,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return c.json({ error: msg }, 500);
+    }
+  });
+
+  // ─── Public API v1: Get Execution Run ───
+  app.get("/api/v1/:stackId/executions/:runId", publicApiMiddleware("executions"), async (c) => {
+    const runId = Number(c.req.param("runId"));
+    const db = getDb();
+
+    const [row] = await db
+      .select()
+      .from(executionRuns)
+      .where(eq(executionRuns.id, runId))
+      .limit(1);
+
+    if (!row) {
+      return c.json({ error: "Execution run not found" }, 404);
+    }
+
+    return c.json({
+      id: row.id,
+      stackId: row.stackId,
+      trigger: row.trigger,
+      status: row.status,
+      inputMessage: row.inputMessage,
+      outputs: row.outputs,
+      trace: row.trace,
+      totalTokens: row.totalTokens,
+      totalCost: row.totalCost,
+      durationMs: row.durationMs,
+      errorMessage: row.errorMessage,
+      createdAt: row.createdAt,
+    });
   });
 
   // ─── Test Output Endpoint ───
@@ -192,8 +447,59 @@ async function boot() {
   // Run migrations
   await migrateToMultiStack();
 
+  // Seed default workflow templates
+  await seedTemplates();
+
+  // Seed default stack blueprints
+  await seedBlueprints();
+
+  // Seed default soul templates
+  await seedSoulTemplates();
+
+  // Seed default agent functions
+  await seedAgentFunctions();
+
+  // Seed default skills taxonomy (safe-fail if migration not yet applied)
+  try {
+    await seedSkills();
+  } catch (err) {
+    console.warn("[boot] seedSkills failed — migration may not be applied yet:", (err as Error).message);
+  }
+
+  // Start background cron scheduler
+  await startScheduler();
+  process.on("SIGINT", () => {
+    console.log("[boot] Shutting down scheduler...");
+    stopScheduler();
+    process.exit(0);
+  });
+
   const app = createApp();
   const port = Number(process.env.PORT) || 3000;
+
+  // ─── Auto-kill any existing process on our port ───
+  try {
+    const netstat = execSync(`netstat -ano | findstr :${port}`).toString();
+    const lines = netstat.split("\n").filter((l) => l.includes("LISTENING"));
+    for (const line of lines) {
+      const parts = line.trim().split(/\s+/);
+      const pid = parts[parts.length - 1];
+      if (pid && /^\d+$/.test(pid)) {
+        try {
+          // Verify it's a Node process before killing
+          const tasklist = execSync(`tasklist /FI "PID eq ${pid}"`).toString();
+          if (tasklist.toLowerCase().includes("node") || tasklist.toLowerCase().includes("tsx")) {
+            execSync(`taskkill /F /PID ${pid}`);
+            console.log(`[boot] Killed stale Node process PID=${pid} on port ${port}`);
+          }
+        } catch {
+          // Process may have already exited
+        }
+      }
+    }
+  } catch {
+    // No process found on port — that's fine
+  }
 
   serve({
     fetch: app.fetch,
